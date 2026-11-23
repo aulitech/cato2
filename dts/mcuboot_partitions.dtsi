@@ -1,0 +1,42 @@
+/*
+ * SPDX-License-Identifier: MIT
+ *
+ * Flash layout: MCUboot chain-loaded by the stock Adafruit UF2 bootloader.
+ *
+ *   0x00000  MBR + SoftDevice S140 v7 (left in place, unused by Zephyr)
+ *   0x27000  MCUboot (where the UF2 bootloader expects the application)
+ *   0x33000  slot 0: running image
+ *   0x8f000  slot 1: OTA download
+ *   0xeb000  settings storage
+ *   0xf4000  Adafruit UF2 bootloader
+ *
+ * Included by both the application and the MCUboot overlay so the two images
+ * always agree on the layout.
+ */
+
+/delete-node/ &code_partition;
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		mcuboot_partition: partition@27000 {
+			label = "mcuboot";
+			reg = <0x00027000 0x0000c000>;
+		};
+
+		slot0_partition: partition@33000 {
+			label = "image-0";
+			reg = <0x00033000 0x0005c000>;
+		};
+
+		slot1_partition: partition@8f000 {
+			label = "image-1";
+			reg = <0x0008f000 0x0005c000>;
+		};
+
+		storage_partition: partition@eb000 {
+			label = "storage";
+			reg = <0x000eb000 0x00009000>;
+		};
+	};
+};

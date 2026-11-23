@@ -1,11 +1,11 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 
 cmake_minimum_required(VERSION 3.20.0)
 
-# The Sense Plus shares the xiao_ble_sense board definition (same nRF52840,
-# LEDs, IMU and mic; the Plus only adds extra castellated pads).
+# The Sense Plus shares the XIAO BLE Sense board definition (same nRF52840,
+# LEDs, IMU and mic; the Plus only adds extra pads on the underside).
 if(NOT DEFINED BOARD)
-  set(BOARD xiao_ble_sense)
+  set(BOARD xiao_ble/nrf52840/sense)
 endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})

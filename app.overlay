@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: MIT */
+
+#include "dts/mcuboot_partitions.dtsi"
+
+/ {
+	chosen {
+		zephyr,code-partition = &slot0_partition;
+	};
+};
