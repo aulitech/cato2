@@ -10,9 +10,10 @@ Zephyr / nRF Connect SDK starter application for the
 - **No debug probe needed** – MCUboot is chain-loaded by the board's stock
   Adafruit UF2 bootloader, so the first flash is drag-and-drop
 
-The app blinks the RGB LED and adds two shell commands: `blink`, which sets
-the blink rate and pattern, and `accel`, which reads the on-board LSM6DS3TR-C
-IMU.
+The app blinks the RGB LED and adds shell commands to set the blink rate and
+pattern (`blink`), rename the board (`name`), read and fully configure the
+on-board LSM6DS3TR-C IMU (`imu`), sleep until reset or motion (`sleep`), and
+restart into the USB bootloader (`bootloader`).
 
 > **Verified on hardware** (XIAO nRF52840 Sense, UF2 bootloader 0.6.1): UF2 first
 > flash, MCUboot chain-load, the shell over BLE and USB, the `accel` and `blink`
@@ -89,6 +90,60 @@ bt_nus:~$ blink pattern r-b-w
 - `blink pattern <steps>` – up to 32 steps, one character each: `r` `g` `b`
   red, green, blue; `y` `c` `m` yellow, cyan, magenta; `w` white; `-` off
 
+### Name
+
+`name` shows the board's Bluetooth name and `name <new name>` changes it, up
+to 26 characters. The name is kept across resets. Phones and computers cache
+names, so a board they have already seen may show its old name for a while.
+
+### IMU
+
+`imu` shows the accelerometer and gyroscope configuration and `imu read` takes
+one reading of acceleration, rotation rate and temperature (`accel` reads the
+accelerometer alone).
+
+```
+bt_nus:~$ imu
+accel  odr 104 Hz, range +-2 g, high-performance mode
+gyro   odr 104 Hz, range +-250 dps, high-performance mode
+saved  no (defaults at boot)
+bt_nus:~$ imu accel range 8
+bt_nus:~$ imu gyro odr 0
+bt_nus:~$ imu save
+```
+
+| Command | Values |
+| --- | --- |
+| `imu accel odr <Hz>`, `imu gyro odr <Hz>` | `0` (off) `12.5` `26` `52` `104` `208` `416` `833` `1660` `3330` `6660` |
+| `imu accel range <g>` | `2` `4` `8` `16` |
+| `imu gyro range <dps>` | `125` `250` `500` `1000` `2000` |
+| `imu accel mode <high\|low>`, `imu gyro mode <high\|low>` | high-performance or low-power |
+| `imu reg read <register> [count]` | any register, `0x00` to `0x7f` |
+| `imu reg write <register> <value>` | any register; see the LSM6DS3TR-C datasheet |
+| `imu save` | keep the current configuration across resets |
+| `imu reset` | return to the defaults and forget the saved configuration |
+
+Everything the chip can do (filters, FIFO, interrupts, tap, free-fall, the
+pedometer and so on) is reachable with `imu reg write`. Changes apply
+immediately but last only until the next reset unless followed by `imu save`,
+which stores the chip's FIFO, interrupt, control and tap/wake-up registers.
+The `sleep` command takes the IMU over; the saved or default configuration is
+restored when the board wakes.
+
+### Sleep
+
+`sleep` powers the board down to its lowest-power state. Bluetooth and USB
+stop, and waking restarts the firmware.
+
+- `sleep off` – sleep until the reset button is pressed. The IMU is powered
+  down as well.
+- `sleep motion [mg]` – sleep until the board is moved, or reset. The
+  accelerometer stays on at 26 Hz in low-power mode and wakes the board when
+  the acceleration changes by more than the threshold between two samples:
+  32 to 1968 mg, 125 mg by default. Smaller values are more sensitive.
+
+After a motion wake-up the log shows `Woken from sleep by motion`.
+
 ### Connecting
 
 **BLE** – connect to **XIAO Sense Plus** with any Nordic UART Service terminal,
@@ -99,6 +154,9 @@ computer, use the included terminal (Ctrl-] quits):
 pip install bleak
 python tools/console.py
 ```
+
+It connects to the first board it finds; pass a name
+(`python tools/console.py "My Board"`) to pick one.
 
 **Web app** – a browser page with the console and firmware upgrade side by
 side, over one Bluetooth connection. It needs Chrome or Edge on a computer or

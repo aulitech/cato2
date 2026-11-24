@@ -13,6 +13,8 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/shell/shell.h>
 
+#include "app.h"
+
 LOG_MODULE_REGISTER(blink, LOG_LEVEL_INF);
 
 #define RATE_MIN_MS     20
@@ -92,7 +94,7 @@ static void apply_pattern(const char *p)
 	k_sem_give(&changed);
 }
 
-/* Called by settings_load() for each stored "blink/..." value. */
+/* Called when main() loads settings, for each stored "blink/..." value. */
 static int blink_settings_set(const char *name, size_t len, settings_read_cb read_cb,
 			      void *cb_arg)
 {
@@ -138,20 +140,11 @@ SETTINGS_STATIC_HANDLER_DEFINE(blink, "blink", NULL, blink_settings_set, NULL, N
 static void blink_thread(void *p1, void *p2, void *p3)
 {
 	size_t step = 0;
-	int err;
 
 	ARRAY_FOR_EACH(leds, i) {
 		if (gpio_is_ready_dt(&leds[i])) {
 			gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
 		}
-	}
-
-	err = settings_subsys_init();
-	if (!err) {
-		err = settings_load_subtree("blink");
-	}
-	if (err) {
-		LOG_ERR("Could not load settings, using defaults (err %d)", err);
 	}
 
 	while (1) {
@@ -180,6 +173,15 @@ static void blink_thread(void *p1, void *p2, void *p3)
 
 K_THREAD_DEFINE(blink_tid, 2048, blink_thread, NULL, NULL, NULL,
 		K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+
+void blink_stop(void)
+{
+	k_thread_suspend(blink_tid);
+
+	ARRAY_FOR_EACH(leds, i) {
+		gpio_pin_set_dt(&leds[i], 0);
+	}
+}
 
 static int cmd_blink(const struct shell *sh, size_t argc, char **argv)
 {

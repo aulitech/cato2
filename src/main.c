@@ -2,14 +2,17 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <ctype.h>
+#include <string.h>
+
 #include <zephyr/kernel.h>
-#include <zephyr/device.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/dfu/mcuboot.h>
-#include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/hwinfo.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/reboot.h>
 #include <hal/nrf_power.h>
@@ -17,28 +20,40 @@
 #include <shell/shell_bt_nus.h>
 #include <app_version.h>
 
+#include "app.h"
+
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
 /* Value the Adafruit bootloader looks for in GPREGRET to stay in UF2 mode. */
 #define UF2_BOOTLOADER_MAGIC 0x57
 
-static const struct device *const imu = DEVICE_DT_GET(DT_NODELABEL(lsm6ds3tr_c));
-
 static struct k_work adv_work;
 
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
-};
+/* Name set with the "name" command, loaded from settings before Bluetooth is up. */
+static char saved_name[CONFIG_BT_DEVICE_NAME_MAX + 1];
+
+static const uint8_t ad_flags[] = { BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR };
 
 static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
 };
 
+/* The advertised name can change at run time, so the data is built on demand. */
+static void build_ad(struct bt_data ad[2])
+{
+	const char *name = bt_get_name();
+
+	ad[0] = (struct bt_data)BT_DATA(BT_DATA_FLAGS, ad_flags, sizeof(ad_flags));
+	ad[1] = (struct bt_data)BT_DATA(BT_DATA_NAME_COMPLETE, name, strlen(name));
+}
+
 static void adv_work_handler(struct k_work *work)
 {
-	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	struct bt_data ad[2];
+	int err;
 
+	build_ad(ad);
+	err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
 		LOG_ERR("Advertising failed to start (err %d)", err);
 	}
@@ -73,34 +88,86 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.recycled = recycled,
 };
 
-static int cmd_accel(const struct shell *sh, size_t argc, char **argv)
+static int app_settings_set(const char *name, size_t len, settings_read_cb read_cb,
+			    void *cb_arg)
 {
-	struct sensor_value accel[3];
+	ssize_t rc;
+
+	if (!settings_name_steq(name, "name", NULL)) {
+		return -ENOENT;
+	}
+	if (len > CONFIG_BT_DEVICE_NAME_MAX) {
+		return -EINVAL;
+	}
+
+	memset(saved_name, 0, sizeof(saved_name));
+	rc = read_cb(cb_arg, saved_name, len);
+
+	return rc < 0 ? rc : 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(app, "app", NULL, app_settings_set, NULL, NULL);
+
+static int cmd_name(const struct shell *sh, size_t argc, char **argv)
+{
+	char name[CONFIG_BT_DEVICE_NAME_MAX + 1] = "";
+	struct bt_data ad[2];
+	size_t len = 0;
 	int err;
 
-	if (!device_is_ready(imu)) {
-		shell_error(sh, "IMU not ready");
-		return -ENODEV;
+	if (argc == 1) {
+		shell_print(sh, "%s", bt_get_name());
+		return 0;
 	}
 
-	err = sensor_sample_fetch(imu);
-	if (!err) {
-		err = sensor_channel_get(imu, SENSOR_CHAN_ACCEL_XYZ, accel);
+	/* Unquoted words are joined with single spaces. */
+	for (size_t i = 1; i < argc; i++) {
+		size_t word = strlen(argv[i]);
+
+		if (len + (i > 1) + word > CONFIG_BT_DEVICE_NAME_MAX) {
+			shell_error(sh, "Name must be at most %d characters",
+				    CONFIG_BT_DEVICE_NAME_MAX);
+			return -EINVAL;
+		}
+		if (i > 1) {
+			name[len++] = ' ';
+		}
+		memcpy(&name[len], argv[i], word);
+		len += word;
 	}
+
+	for (size_t i = 0; i < len; i++) {
+		if (!isprint((unsigned char)name[i])) {
+			shell_error(sh, "Name must be plain printable characters");
+			return -EINVAL;
+		}
+	}
+	if (len == 0) {
+		shell_error(sh, "Name must not be empty");
+		return -EINVAL;
+	}
+
+	err = bt_set_name(name);
 	if (err) {
-		shell_error(sh, "IMU read failed (err %d)", err);
+		shell_error(sh, "Could not set the name (err %d)", err);
 		return err;
 	}
 
-	shell_print(sh, "accel x=%.2f y=%.2f z=%.2f m/s^2",
-		    sensor_value_to_double(&accel[0]),
-		    sensor_value_to_double(&accel[1]),
-		    sensor_value_to_double(&accel[2]));
+	/* Takes effect now if advertising; otherwise when advertising next starts. */
+	build_ad(ad);
+	(void)bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+
+	err = settings_save_one("app/name", name, len);
+	if (err) {
+		shell_error(sh, "Applied, but not saved (err %d)", err);
+		return err;
+	}
 
 	return 0;
 }
 
-SHELL_CMD_REGISTER(accel, NULL, "Read the on-board accelerometer", cmd_accel);
+SHELL_CMD_ARG_REGISTER(name, NULL, "[new name]  Show or change the board's Bluetooth name",
+		       cmd_name, 1, SHELL_OPT_ARG_CHECK_SKIP);
 
 static int cmd_bootloader(const struct shell *sh, size_t argc, char **argv)
 {
@@ -120,23 +187,40 @@ SHELL_CMD_REGISTER(bootloader, NULL,
 
 int main(void)
 {
+	uint32_t reset_cause;
 	int err;
 
 	LOG_INF("XIAO nRF52840 Sense Plus, firmware %s", APP_VERSION_STRING);
 
-	if (device_is_ready(imu)) {
-		struct sensor_value odr = { .val1 = 104 };
-
-		sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ,
-				SENSOR_ATTR_SAMPLING_FREQUENCY, &odr);
-	} else {
-		LOG_WRN("IMU not ready");
+	err = settings_subsys_init();
+	if (!err) {
+		err = settings_load();
 	}
+	if (err) {
+		LOG_ERR("Could not load settings, using defaults (err %d)", err);
+	}
+
+	/* The only pin armed to wake the SoC from sleep is the IMU's interrupt. */
+	if (hwinfo_get_reset_cause(&reset_cause) == 0) {
+		if (reset_cause & RESET_LOW_POWER_WAKE) {
+			LOG_INF("Woken from sleep by motion");
+		}
+		hwinfo_clear_reset_cause();
+	}
+
+	imu_init();
 
 	err = bt_enable(NULL);
 	if (err) {
 		LOG_ERR("Bluetooth enable failed (err %d)", err);
 		return 0;
+	}
+
+	if (saved_name[0] != '\0') {
+		err = bt_set_name(saved_name);
+		if (err) {
+			LOG_WRN("Could not restore the saved name (err %d)", err);
+		}
 	}
 
 	err = shell_bt_nus_init();

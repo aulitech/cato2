@@ -5,6 +5,9 @@
     pip install bleak
     python tools/console.py [device-name]
 
+Without a name it connects to the first board found that offers the UART
+service, whatever it has been renamed to.
+
 Keys are sent as typed, so tab completion and history work as on a serial
 terminal. Press Ctrl-] to quit.
 """
@@ -15,16 +18,22 @@ import sys
 
 from bleak import BleakClient, BleakScanner
 
+NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # host -> board
 NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # board -> host
 QUIT_KEY = b"\x1d"  # Ctrl-]
 
 
-async def run(name: str) -> int:
-    print(f"Scanning for '{name}'...", file=sys.stderr)
-    device = await BleakScanner.find_device_by_name(name, timeout=15)
+async def run(name: str | None) -> int:
+    if name:
+        print(f"Scanning for '{name}'...", file=sys.stderr)
+        device = await BleakScanner.find_device_by_name(name, timeout=15)
+    else:
+        print("Scanning for a board...", file=sys.stderr)
+        device = await BleakScanner.find_device_by_filter(
+            lambda _, adv: NUS_SERVICE in adv.service_uuids, timeout=15)
     if device is None:
-        print(f"'{name}' not found. Is it powered and not connected elsewhere?",
+        print("No board found. Is it powered, awake and not connected elsewhere?",
               file=sys.stderr)
         return 1
 
@@ -48,7 +57,8 @@ async def run(name: str) -> int:
 
     async with BleakClient(device, disconnected_callback=lambda _: done.set()) as client:
         await client.start_notify(NUS_TX, on_output)
-        print("Connected. Ctrl-] to quit.", file=sys.stderr)
+        print(f"Connected to {device.name or device.address}. Ctrl-] to quit.",
+              file=sys.stderr)
         chunk = client.mtu_size - 3
 
         saved_tty = None
@@ -94,4 +104,4 @@ async def run(name: str) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(run(sys.argv[1] if len(sys.argv) > 1 else "XIAO Sense Plus")))
+    sys.exit(asyncio.run(run(sys.argv[1] if len(sys.argv) > 1 else None)))

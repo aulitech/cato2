@@ -11,4 +11,4 @@ endif()
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(xiao_nrf52840_sense_plus)
 
-target_sources(app PRIVATE src/main.c src/blink.c)
+target_sources(app PRIVATE src/main.c src/blink.c src/imu.c src/sleep.c)
