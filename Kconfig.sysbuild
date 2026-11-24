@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+
+# Sign images with the key named by the MCUBOOT_SIGNING_KEY environment
+# variable (the path of an ECDSA P-256 private key in PEM format). When it is
+# not set, the build falls back to MCUboot's public development key.
+config BOOT_SIGNATURE_KEY_FILE
+	default "$(MCUBOOT_SIGNING_KEY)" if "$(MCUBOOT_SIGNING_KEY)" != ""
+
+source "share/sysbuild/Kconfig"

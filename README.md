@@ -57,6 +57,9 @@ Outputs:
    `XIAO-SENSE`.
 2. Copy `build/first_flash.uf2` onto the drive.
 
+A board already running this firmware can skip the button: the `bootloader`
+shell command resets it into the same USB drive mode.
+
 The same procedure recovers a board at any time, since the UF2 bootloader is
 left untouched.
 
@@ -142,6 +145,34 @@ MCUboot swaps the new image in on the next reset. The app confirms the image
 once Bluetooth is up; an image that never gets that far is reverted on the
 following reset.
 
+## Signing key
+
+MCUboot only boots and accepts OTA images signed with the key it was built
+with. To use your own key instead of the public development one, point
+`MCUBOOT_SIGNING_KEY` at an ECDSA P-256 private key when building:
+
+```sh
+# Once: generate a key. Keep it out of the repository and back it up.
+python3 $ZEPHYR_BASE/../bootloader/mcuboot/scripts/imgtool.py keygen \
+    -t ecdsa-p256 -k ~/.mcuboot/xiao-nrf52840-sense-plus.pem
+
+MCUBOOT_SIGNING_KEY=~/.mcuboot/xiao-nrf52840-sense-plus.pem \
+    west build -p -b xiao_ble/nrf52840/sense --sysbuild
+```
+
+The variable is read when the build is configured, so use a fresh build
+directory (`-p`) when switching keys.
+
+Changing the key changes the bootloader. A board must be flashed once over USB
+with the new `first_flash.uf2`; after that it rejects OTA images signed with
+any other key, and an OTA image signed with the new key is rejected by boards
+still running the old bootloader. If the key is lost, deployed boards can only
+be updated over USB.
+
+For CI builds, the repository has the key as the GitHub Actions secret
+`MCUBOOT_SIGNING_KEY` (the PEM text): write it to a file and set the variable
+to that file's path.
+
 ## Flash layout
 
 | Address | Size | Contents |
@@ -157,10 +188,9 @@ Defined in `dts/mcuboot_partitions.dtsi`, shared by the app and MCUboot.
 
 ## Before shipping a product
 
-- **Signing key** – images are signed with MCUboot's public default key, so
-  anyone can sign an image the bootloader will accept. Generate your own key and
-  set `SB_CONFIG_BOOT_SIGNATURE_KEY_FILE` in `sysbuild.conf` (keep the key out
-  of the repository).
+- **Signing key** – by default images are signed with MCUboot's public
+  development key, so anyone can sign an image the bootloader will accept. Build
+  with your own key as described under [Signing key](#signing-key).
 - **Open access** – the console and the OTA service accept unauthenticated,
   unencrypted connections from any device in range. Require pairing before
   deploying.

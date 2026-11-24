@@ -11,11 +11,16 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/sys/reboot.h>
+#include <hal/nrf_power.h>
 #include <bluetooth/services/nus.h>
 #include <shell/shell_bt_nus.h>
 #include <app_version.h>
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
+
+/* Value the Adafruit bootloader looks for in GPREGRET to stay in UF2 mode. */
+#define UF2_BOOTLOADER_MAGIC 0x57
 
 static const struct device *const imu = DEVICE_DT_GET(DT_NODELABEL(lsm6ds3tr_c));
 
@@ -96,6 +101,22 @@ static int cmd_accel(const struct shell *sh, size_t argc, char **argv)
 }
 
 SHELL_CMD_REGISTER(accel, NULL, "Read the on-board accelerometer", cmd_accel);
+
+static int cmd_bootloader(const struct shell *sh, size_t argc, char **argv)
+{
+	shell_print(sh, "Resetting into the UF2 bootloader...");
+	/* Let the message reach the terminal before the link drops. */
+	k_msleep(500);
+
+	nrf_power_gpregret_set(NRF_POWER, 0, UF2_BOOTLOADER_MAGIC);
+	sys_reboot(SYS_REBOOT_COLD);
+
+	return 0;
+}
+
+SHELL_CMD_REGISTER(bootloader, NULL,
+		   "Reset into the UF2 bootloader (USB drive) for flashing over USB",
+		   cmd_bootloader);
 
 int main(void)
 {
