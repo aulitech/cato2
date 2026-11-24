@@ -127,21 +127,24 @@ struct bond_walk {
 	bool have_found;
 };
 
-static void connected_peer(struct bt_conn *conn, void *user_data)
+static bool is_connected(const bt_addr_le_t *addr)
 {
+	struct bt_conn *conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, addr);
 	struct bt_conn_info info;
-	bt_addr_le_t *addr = user_data;
+	bool connected = false;
 
-	if (bt_conn_get_info(conn, &info) == 0 && info.state == BT_CONN_STATE_CONNECTED) {
-		bt_addr_le_copy(addr, bt_conn_get_dst(conn));
+	if (conn != NULL) {
+		connected = bt_conn_get_info(conn, &info) == 0 &&
+			    info.state == BT_CONN_STATE_CONNECTED;
+		bt_conn_unref(conn);
 	}
+	return connected;
 }
 
 static void walk_bond(const struct bt_bond_info *info, void *user_data)
 {
 	struct bond_walk *walk = user_data;
 	char addr[BT_ADDR_LE_STR_LEN];
-	bt_addr_le_t connected = *BT_ADDR_LE_NONE;
 
 	walk->index++;
 
@@ -153,10 +156,9 @@ static void walk_bond(const struct bt_bond_info *info, void *user_data)
 		return;
 	}
 
-	bt_conn_foreach(BT_CONN_TYPE_LE, connected_peer, &connected);
 	bt_addr_le_to_str(&info->addr, addr, sizeof(addr));
 	shell_print(walk->sh, "%d  %s%s", walk->index, addr,
-		    bt_addr_le_eq(&connected, &info->addr) ? "  (connected)" : "");
+		    is_connected(&info->addr) ? "  (connected)" : "");
 }
 
 static int cmd_bonds(const struct shell *sh, size_t argc, char **argv)

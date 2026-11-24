@@ -4,7 +4,7 @@
 // bonds, sleep, bootloader). Each control runs the same command a user would
 // type in the console and shows the board's own reply or error.
 
-import { parseBlink, parseBonds, parseImu, parseImuRead } from "./shell.js";
+import { parseBlink, parseBonds, parseHid, parseImu, parseImuRead } from "./shell.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -26,6 +26,10 @@ const RANGE_OPTIONS = {
 	       ["1000", "±1000 dps"], ["2000", "±2000 dps"]],
 };
 const MODE_OPTIONS = [["high", "High perf."], ["low", "Low power"]];
+
+const HID_RATE_OPTIONS = [["10", "10 Hz"], ["25", "25 Hz"], ["50", "50 Hz"], ["100", "100 Hz"]];
+const HID_REPORTS = [["mouse", "Mouse"], ["keyboard", "Keyboard"], ["accel", "Accelerometer"],
+		     ["gyro", "Gyroscope"], ["orientation", "Orientation"]];
 
 const LIVE_INTERVAL_MS = 400;
 
@@ -347,6 +351,80 @@ export function initControls({ shell, onName }) {
 		}
 	});
 
+	// ---------------------------------------------------------------- hid ---
+
+	fill($("hid-rate"), HID_RATE_OPTIONS);
+
+	const hidSwitches = {};
+
+	for (const [report, label] of HID_REPORTS) {
+		const wrapper = document.createElement("label");
+		const box = document.createElement("input");
+
+		box.type = "checkbox";
+		box.disabled = true;
+		box.addEventListener("change", () => act("hid", async () => {
+			try {
+				await shell.run(`hid ${box.checked ? "enable" : "disable"} ${report}`);
+			} finally {
+				await loadHid().catch(() => {});
+			}
+		}, "Applied and saved."));
+		wrapper.append(box, ` ${label}`);
+		$("hid-reports").append(wrapper);
+		hidSwitches[report] = box;
+	}
+
+	async function loadHid() {
+		const hid = parseHid(await shell.run("hid"));
+		const rate = String(hid.rate);
+
+		for (const [report, box] of Object.entries(hidSwitches)) {
+			box.checked = hid.enabled.includes(report);
+		}
+		if (![...$("hid-rate").options].some((option) => option.value === rate)) {
+			$("hid-rate").add(new Option(`${rate} Hz`, rate));
+		}
+		$("hid-rate").value = rate;
+		$("hid-hosts").textContent = hid.listening.length
+			? `${hid.hosts} connected, in use`
+			: "No computer is using it yet";
+	}
+
+	const hidAction = (id, command) => $(id).addEventListener("click",
+		() => act("hid", () => shell.run(typeof command === "function" ? command() : command,
+					       { timeout: 10000 })));
+
+	hidAction("hid-move", () => `hid mouse move ${$("hid-dx").value || 0} ${$("hid-dy").value || 0}`);
+	hidAction("hid-click-left", "hid mouse click left");
+	hidAction("hid-click-right", "hid mouse click right");
+	hidAction("hid-scroll-up", "hid mouse scroll 3");
+	hidAction("hid-scroll-down", "hid mouse scroll -3");
+	hidAction("hid-key-send", () => {
+		const key = $("hid-key").value.trim();
+
+		if (!key || /\s/.test(key)) {
+			throw new Error("Enter one key, such as enter or ctrl+c");
+		}
+		quote(key);
+		return `hid key ${key}`;
+	});
+	hidAction("hid-type", () => {
+		if (!$("hid-text").value) {
+			throw new Error("Enter some text");
+		}
+		// Typing takes about 30 ms a character.
+		return `hid type ${quote($("hid-text").value)}`;
+	});
+
+	$("hid-rate").addEventListener("change", () => act("hid", async () => {
+		try {
+			await shell.run(`hid rate ${$("hid-rate").value}`);
+		} finally {
+			await loadHid().catch(() => {});
+		}
+	}, "Applied and saved."));
+
 	// ---------------------------------------------------------- lifecycle ---
 
 	async function refresh() {
@@ -354,6 +432,7 @@ export function initControls({ shell, onName }) {
 		await act("blink", loadBlink);
 		await act("imu", loadImu);
 		await act("bonds", loadBonds);
+		await act("hid", loadHid);
 	}
 
 	$("refresh-all").addEventListener("click", refresh);

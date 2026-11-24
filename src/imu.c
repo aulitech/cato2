@@ -269,6 +269,41 @@ int imu_arm_wake(uint32_t *threshold_mg)
 	return reg_read(REG_WAKE_UP_SRC, &source);
 }
 
+int imu_sample(float accel_g[3], float gyro_dps[3])
+{
+	uint8_t ctrl[2];
+	uint8_t raw[12];
+	float accel_scale;
+	float gyro_scale;
+	int err;
+
+	if (!ready) {
+		return -ENODEV;
+	}
+
+	/* CTRL1_XL and CTRL2_G give the scales; the outputs are gyro then accel. */
+	err = i2c_burst_read_dt(&bus, REG_CTRL1_XL, ctrl, sizeof(ctrl));
+	if (!err) {
+		err = i2c_burst_read_dt(&bus, REG_OUTX_L_G, raw, sizeof(raw));
+	}
+	if (err) {
+		return err;
+	}
+
+	accel_scale = (float)accel_mg_per_lsb[(ctrl[0] & CTRL_FS_MASK) >> CTRL_FS_SHIFT] / 1000.0f;
+	gyro_scale = ((ctrl[1] & CTRL2_FS_125)
+			      ? (float)GYRO_125_MDPS_PER_LSB
+			      : (float)gyro_mdps_per_lsb[(ctrl[1] & CTRL_FS_MASK) >> CTRL_FS_SHIFT]) /
+		     1000.0f;
+
+	for (int i = 0; i < 3; i++) {
+		gyro_dps[i] = (int16_t)sys_get_le16(&raw[2 * i]) * gyro_scale;
+		accel_g[i] = (int16_t)sys_get_le16(&raw[6 + 2 * i]) * accel_scale;
+	}
+
+	return 0;
+}
+
 /* ------------------------------------------------------------ settings --- */
 
 static int imu_settings_set(const char *name, size_t len, settings_read_cb read_cb,

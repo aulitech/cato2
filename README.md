@@ -8,20 +8,25 @@ Zephyr / nRF Connect SDK starter application for the
 - **OTA upgrade** – MCUmgr/SMP over Bluetooth, with MCUboot swapping in the new
   image and reverting it if it fails to start
 - **Pairing** – the Bluetooth console and OTA need an encrypted link; up to
-  five paired devices are remembered
+  five paired devices are remembered and three can be connected at once
+- **HID** – the board is a Bluetooth mouse and keyboard, and streams its
+  accelerometer, gyroscope and fused orientation as HID sensor reports
 - **No debug probe needed** – MCUboot is chain-loaded by the board's stock
   Adafruit UF2 bootloader, so the first flash is drag-and-drop
 
 The app blinks the RGB LED and adds shell commands to set the blink rate and
 pattern (`blink`), rename the board (`name`), manage paired devices (`bonds`),
-read and fully configure the on-board LSM6DS3TR-C IMU (`imu`), sleep until
-reset or motion (`sleep`), and restart into the USB bootloader (`bootloader`).
+read and fully configure the on-board LSM6DS3TR-C IMU (`imu`), send mouse and
+keyboard input (`hid`), sleep until reset or motion (`sleep`), and restart
+into the USB bootloader (`bootloader`).
 
 > **Verified on hardware** (XIAO nRF52840 Sense, UF2 bootloader 0.6.1): UF2 first
 > flash, MCUboot chain-load, the shell over BLE and USB, every shell command
-> below, pairing with a Mac, and OTA upgrades in both directions. Not exercised:
-> MCUboot's automatic revert of a bad image, refusing a sixth or locked-out
-> device, and pairing from a phone.
+> below, pairing with a Mac, the HID input and property reports as seen by macOS, and OTA
+> upgrades in both directions. Not exercised: MCUboot's automatic revert of a
+> bad image, refusing a sixth or locked-out device, more than one device
+> connected at once, and any host other than macOS (no phone, Windows or
+> Linux).
 
 ## Requirements
 
@@ -156,12 +161,87 @@ The board has no display or buttons, so pairing only encrypts the link: it
 cannot check who is pairing. Any device in range can pair while pairing is on
 and a slot is free, so switch it off (`bonds pairing off`) once your own
 devices are bonded. With all five slots in use, remove a bond before pairing
-another device.
+another device. Up to three devices can be connected at the same time; they
+share the one Bluetooth shell.
 
 If a bond is removed on one side only, the other side's connection attempts
 fail: remove ("forget") the board on the phone or computer too, then pair
 again. The same applies to a device that was bonded to the board under other
 firmware.
+
+### HID: mouse, keyboard and sensors
+
+The board is a Bluetooth HID device. A paired computer or phone sees a mouse
+and a keyboard, and keeps the connection open like any other Bluetooth mouse;
+two more devices can still connect for the console and OTA.
+
+| Report | Contents |
+| --- | --- |
+| 1 Mouse | five buttons, relative X and Y (16 bit), wheel |
+| 2 Keyboard | modifiers and six keys; LED output report |
+| 3 Accelerometer | HID Sensor *Accelerometer 3D*: X, Y, Z in thousandths of a g |
+| 4 Gyroscope | HID Sensor *Gyrometer 3D*: X, Y, Z in tenths of a degree per second |
+| 5 Orientation | HID Sensor *Device Orientation*: quaternion x, y, z, w, scaled by 10000 |
+
+**Every report is off until you switch it on**, and the choice is kept across
+resets:
+
+```
+bt_nus:~$ hid enable mouse
+bt_nus:~$ hid enable orientation
+bt_nus:~$ hid
+enabled: mouse orientation
+hosts 1, listening to: mouse keyboard accel gyro orientation
+sensor rate 50 Hz
+keyboard LEDs 0x00
+link: interval 15.00 ms, 2M, MTU 498
+bt_nus:~$ hid mouse move 50 -20
+```
+
+- `hid enable <report|all>`, `hid disable <report|all>` – `mouse`, `keyboard`,
+  `accel`, `gyro`, `orientation`
+- `hid rate <Hz>` – rate of the sensor reports, 1 to 100 Hz (default 50)
+- `hid mouse move <x> <y>`, `hid mouse click [left|right|middle]`,
+  `hid mouse scroll <steps>`
+- `hid key <key>` – tap one key: a character, a name (`enter` `esc` `tab`
+  `space` `backspace` `delete` `insert` `home` `end` `pageup` `pagedown` `up`
+  `down` `left` `right` `capslock` `f1`–`f12`), optionally with `ctrl` `shift`
+  `alt` `gui` joined by `+`
+- `hid type <text>` – type text, assuming a US keyboard layout on the host
+
+`hid` also lists, for each connected device, the connection interval, radio
+mode and MTU it negotiated.
+
+**Two HID services.** A HID over GATT report map is limited to 512 bytes, so
+the mouse and keyboard are one HID service and the three sensors another.
+
+**Sensor reports.** Each starts with the standard sensor state and event
+bytes. Each sensor also has the HID Sensor property (feature) report that
+operating system sensor drivers use: connection type, reporting state, power
+state, sensor state, report interval and change sensitivity. A host can pace a
+sensor by writing the report interval (one rate serves all three sensors) and
+stop or restart its reports with the reporting or power state. A report is
+sent only if it is enabled on the board and the host has not turned it off.
+Maximum and minimum properties are left out to fit the size limit.
+
+The enabled sensor reports are streamed while a host is connected. The IMU is
+sampled at 100 Hz with whatever rate and range `imu` has set, so keep both
+sensors on at 104 Hz or more for a meaningful orientation. The orientation
+combines the gyroscope with the accelerometer's sense of down, and removes the
+gyroscope's zero offset whenever the board has been still for a second. There
+is no magnetometer, so heading is relative to where the board was when
+streaming started and drifts slowly.
+
+**Throughput.** The board asks for the 2 Mbit radio mode, a 498-byte MTU and
+an 11.25 ms connection interval, queues several reports per connection event,
+and packs reports into one packet for hosts that support multiple-value
+notifications. What gets through is up to the host. macOS kept a 15 ms
+interval and took about 120 reports per second in total: one sensor at 100 Hz,
+or all three at about 40 Hz each.
+
+The Device Information Service carries the chip's unique ID as the serial
+number, and the pid.codes test IDs (`1209:0001`) as vendor and product:
+replace those in `prj.conf` with your own.
 
 ### Sleep
 
@@ -191,11 +271,12 @@ python tools/console.py
 It connects to the first board it finds; pass a name
 (`python tools/console.py "My Board"`) to pick one.
 
-**Web app** – a browser page with the console, controls for every command
-above (name, blink, IMU, paired devices, sleep, bootloader) and firmware
-upgrade, all over one Bluetooth connection. The controls run the same shell
-commands you would type, visibly in the console. It needs Chrome or Edge on a computer or
-Android; Safari, Firefox and iOS have no Web Bluetooth.
+**Web app** – a browser page with the console, fold-away controls for every
+command above (name, blink, IMU, paired devices, sleep, mouse and keyboard,
+bootloader) and firmware upgrade, all over one Bluetooth connection. The
+controls run the same shell commands you would type, visibly in the console.
+It needs Chrome or Edge on a computer or Android; Safari, Firefox and iOS have
+no Web Bluetooth.
 
 Open <https://auli-ng.netlify.app>, click **Connect** and pick the board.
 
@@ -227,8 +308,8 @@ the VS Code serial terminal or `screen`.
    [Connecting](#connecting)) or with **nRF Connect Device Manager**
    (iOS/Android).
 
-The board accepts one Bluetooth connection at a time, so disconnect any other
-console session first.
+Up to three devices can be connected at once, so a console session or a
+computer using the board as a mouse does not block the upgrade.
 
 MCUboot swaps the new image in on the next reset. The app confirms the image
 once Bluetooth is up; an image that never gets that far is reverted on the

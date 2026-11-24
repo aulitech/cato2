@@ -500,6 +500,47 @@ function updateControls() {
 	controls.setConnected(connected && !state.busy);
 }
 
+// Side-panel cards fold away: all closed to begin with, one open at a time,
+// and the one just opened is brought to the top of the panel.
+function initAccordion() {
+	const cards = [...document.querySelectorAll("#controls .card")];
+
+	for (const card of cards) {
+		const head = card.querySelector(".card-head");
+
+		const toggle = () => {
+			const open = !card.classList.contains("open");
+
+			for (const other of cards) {
+				other.classList.toggle("open", open && other === card);
+				other.querySelector(".card-head")
+					.setAttribute("aria-expanded", String(open && other === card));
+			}
+			if (open) {
+				card.scrollIntoView({ block: "start", behavior: "smooth" });
+			}
+		};
+
+		head.setAttribute("role", "button");
+		head.setAttribute("tabindex", "0");
+		head.setAttribute("aria-expanded", "false");
+		head.addEventListener("click", (event) => {
+			// Buttons in the heading (Refresh) act; they do not fold the card.
+			if (!event.target.closest("button")) {
+				toggle();
+			}
+		});
+		head.addEventListener("keydown", (event) => {
+			if (event.target === head && (event.key === "Enter" || event.key === " ")) {
+				event.preventDefault();
+				toggle();
+			}
+		});
+	}
+}
+
+initAccordion();
+
 ui.connect.addEventListener("click", async () => {
 	if (state.smpChar) {
 		disconnect();

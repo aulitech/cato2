@@ -180,10 +180,30 @@ aside {
 
 aside .card { flex: none; }
 
+/* Cards in the side panel fold away; only one is open at a time. */
+aside .card-head { cursor: pointer; user-select: none; }
+aside .card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+aside .card-head h2 { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+aside .card-head h2::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-right: 2px solid var(--muted);
+	border-bottom: 2px solid var(--muted);
+	transform: rotate(-45deg);
+	transition: transform 0.12s;
+}
+aside .card.open .card-head h2::before { transform: rotate(45deg); }
+aside .card:not(.open) > .card-head { border-bottom: none; }
+aside .card:not(.open) > .card-body { display: none; }
+aside .card:not(.open) > .card-head button { display: none; }
+
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row > label { color: var(--muted); font-size: 12px; }
 .grow { flex: 1; }
 .spread { justify-content: space-between; }
+
+#hid-reports label { color: var(--text); font-size: 13px; }
 
 .message { margin: 0; min-height: 1.45em; font-size: 12px; color: var(--muted); }
 .message.error { color: var(--error); }
@@ -454,6 +474,54 @@ progress { width: 100%; height: 8px; }
 					<button id="sleep-off" disabled>Sleep until reset button</button>
 				</div>
 				<p class="note">Sleeping disconnects the board. It restarts when it wakes.</p>
+				<p class="message"></p>
+			</div>
+		</section>
+
+		<section class="card" data-card="hid">
+			<div class="card-head">
+				<h2>Mouse, keyboard, sensors</h2>
+				<span id="hid-hosts" class="note"></span>
+			</div>
+			<div class="card-body">
+				<div>
+					<div class="row" id="hid-reports"></div>
+					<p class="note">Reports the board sends. All are off until switched on.</p>
+				</div>
+				<div class="row">
+					<label for="hid-dx">Mouse</label>
+					<input id="hid-dx" type="number" min="-32767" max="32767" value="50"
+					       aria-label="Move right by" disabled>
+					<input id="hid-dy" type="number" min="-32767" max="32767" value="0"
+					       aria-label="Move down by" disabled>
+					<button id="hid-move" disabled>Move</button>
+				</div>
+				<div class="row">
+					<button id="hid-click-left" disabled>Left click</button>
+					<button id="hid-click-right" disabled>Right click</button>
+					<button id="hid-scroll-up" class="small" disabled>Scroll up</button>
+					<button id="hid-scroll-down" class="small" disabled>Scroll down</button>
+				</div>
+				<div class="row">
+					<label for="hid-key">Key</label>
+					<input id="hid-key" class="grow mono" type="text" placeholder="enter, ctrl+c, shift+f5"
+					       spellcheck="false" autocapitalize="off" disabled>
+					<button id="hid-key-send" disabled>Tap</button>
+				</div>
+				<div class="row">
+					<label for="hid-text">Text</label>
+					<input id="hid-text" class="grow" type="text" maxlength="100"
+					       spellcheck="false" disabled>
+					<button id="hid-type" disabled>Type</button>
+				</div>
+				<div class="row">
+					<label for="hid-rate">Sensor report rate</label>
+					<select id="hid-rate" disabled></select>
+				</div>
+				<p class="note">
+					These act on whichever computer or phone is using the board as a
+					mouse and keyboard, which may be this one.
+				</p>
 				<p class="message"></p>
 			</div>
 		</section>

@@ -9,7 +9,9 @@
  * paired can neither send shell input nor subscribe to shell output, and its
  * attempt is answered with the error that makes phones and computers pair.
  *
- * The shell runs from boot. Output is dropped while no device is subscribed.
+ * The shell runs from boot and is shared: input from any connected device is
+ * accepted and output goes to every device that has subscribed. It is dropped
+ * while none has.
  */
 
 #include <zephyr/kernel.h>
@@ -41,9 +43,6 @@ RING_BUF_DECLARE(rx_ringbuf, 256);
 static shell_transport_handler_t shell_handler;
 static void *shell_context;
 
-static struct k_spinlock conn_lock;
-static struct bt_conn *subscriber;
-
 static ssize_t on_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			   const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
@@ -59,40 +58,37 @@ static ssize_t on_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr
 	return len;
 }
 
-static void on_tx_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
-{
-	/* Tracked per connection in ble_shell_connected()/disconnected(). */
-	ARG_UNUSED(attr);
-	ARG_UNUSED(value);
-}
-
 BT_GATT_SERVICE_DEFINE(nus_service,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(APP_UUID_NUS_SERVICE_VAL)),
 	BT_GATT_CHARACTERISTIC(UUID_NUS_TX, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE,
 			       NULL, NULL, NULL),
-	BT_GATT_CCC(on_tx_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT),
+	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT),
 	BT_GATT_CHARACTERISTIC(UUID_NUS_RX,
 			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
 			       BT_GATT_PERM_WRITE_ENCRYPT, NULL, on_rx_write, NULL),
 );
 
-void ble_shell_connected(struct bt_conn *conn)
+struct output {
+	const uint8_t *data;
+	size_t length;
+};
+
+static void write_to(struct bt_conn *conn, void *user_data)
 {
-	k_spinlock_key_t key = k_spin_lock(&conn_lock);
+	const struct bt_gatt_attr *tx_attr = &nus_service.attrs[TX_ATTR_INDEX];
+	const struct output *output = user_data;
+	size_t sent = 0;
 
-	subscriber = conn;
-	k_spin_unlock(&conn_lock, key);
-}
+	while (sent < output->length &&
+	       bt_gatt_is_subscribed(conn, tx_attr, BT_GATT_CCC_NOTIFY)) {
+		size_t chunk = MIN(output->length - sent,
+				   bt_gatt_get_mtu(conn) - NOTIFY_OVERHEAD);
 
-void ble_shell_disconnected(void)
-{
-	k_spinlock_key_t key = k_spin_lock(&conn_lock);
-
-	subscriber = NULL;
-	k_spin_unlock(&conn_lock, key);
-
-	/* Do not leave half a command line for the next device. */
-	ring_buf_reset(&rx_ringbuf);
+		if (bt_gatt_notify(conn, tx_attr, &output->data[sent], chunk) != 0) {
+			break;
+		}
+		sent += chunk;
+	}
 }
 
 /* ----------------------------------------------------- shell transport --- */
@@ -119,35 +115,13 @@ static int transport_enable(const struct shell_transport *transport, bool blocki
 static int transport_write(const struct shell_transport *transport, const void *data,
 			   size_t length, size_t *count)
 {
-	const struct bt_gatt_attr *tx_attr = &nus_service.attrs[TX_ATTR_INDEX];
-	const uint8_t *bytes = data;
-	struct bt_conn *conn = NULL;
-	k_spinlock_key_t key;
-	size_t sent = 0;
+	struct output output = { .data = data, .length = length };
 
 	/* Everything is always "written": with nobody listening it is dropped. */
 	*count = length;
 
 	if (!k_is_in_isr()) {
-		key = k_spin_lock(&conn_lock);
-		if (subscriber != NULL) {
-			conn = bt_conn_ref(subscriber);
-		}
-		k_spin_unlock(&conn_lock, key);
-	}
-
-	while (conn != NULL && sent < length && bt_gatt_is_subscribed(conn, tx_attr,
-								      BT_GATT_CCC_NOTIFY)) {
-		size_t chunk = MIN(length - sent, bt_gatt_get_mtu(conn) - NOTIFY_OVERHEAD);
-
-		if (bt_gatt_notify(conn, tx_attr, &bytes[sent], chunk) != 0) {
-			break;
-		}
-		sent += chunk;
-	}
-
-	if (conn != NULL) {
-		bt_conn_unref(conn);
+		bt_conn_foreach(BT_CONN_TYPE_LE, write_to, &output);
 	}
 
 	if (shell_handler != NULL) {

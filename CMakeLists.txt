@@ -17,6 +17,7 @@ target_sources(app PRIVATE
   src/blink.c
   src/bonds.c
   src/crash.c
+  src/hid.c
   src/imu.c
   src/sleep.c
 )

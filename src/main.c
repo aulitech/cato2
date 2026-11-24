@@ -26,17 +26,26 @@ LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 #define UF2_BOOTLOADER_MAGIC 0x57
 
 /* How long a new connection gets to encrypt the link before it is dropped. */
-#define SECURITY_TIMEOUT K_SECONDS(30)
+#define SECURITY_TIMEOUT_MS 30000
 
 static struct k_work adv_work;
 static struct k_work_delayable security_timeout_work;
-static struct bt_conn *current_conn;
-static bool link_encrypted;
+
+/* Connections that have not encrypted the link yet, and when they run out of time. */
+static struct {
+	struct bt_conn *conn;
+	int64_t deadline;
+} unsecured[CONFIG_BT_MAX_CONN];
+static K_MUTEX_DEFINE(unsecured_lock);
 
 static const uint8_t ad_flags[] = { BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR };
 
+/* Scan response: the services hosts look for, and what kind of device this is. */
 static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, APP_UUID_NUS_SERVICE_VAL),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HIDS_VAL)),
+	BT_DATA_BYTES(BT_DATA_GAP_APPEARANCE,
+		      BT_BYTES_LIST_LE16(CONFIG_BT_DEVICE_APPEARANCE)),
 };
 
 /* The advertised name can change at run time, so the data is built on demand. */
@@ -48,6 +57,7 @@ static void build_ad(struct bt_data ad[2])
 	ad[1] = (struct bt_data)BT_DATA(BT_DATA_NAME_COMPLETE, name, strlen(name));
 }
 
+/* Advertises whenever there is room for another connection. */
 static void adv_work_handler(struct k_work *work)
 {
 	struct bt_data ad[2];
@@ -55,16 +65,47 @@ static void adv_work_handler(struct k_work *work)
 
 	build_ad(ad);
 	err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-	if (err) {
+	if (err && err != -EALREADY && err != -ENOMEM && err != -ECONNREFUSED) {
 		LOG_ERR("Advertising failed to start (err %d)", err);
 	}
 }
 
+static void unsecured_remove(struct bt_conn *conn)
+{
+	k_mutex_lock(&unsecured_lock, K_FOREVER);
+	ARRAY_FOR_EACH(unsecured, i) {
+		if (unsecured[i].conn == conn) {
+			bt_conn_unref(unsecured[i].conn);
+			unsecured[i].conn = NULL;
+		}
+	}
+	k_mutex_unlock(&unsecured_lock);
+}
+
+/* Drops connections that have not encrypted in time, so they cannot sit on a slot. */
 static void security_timeout_handler(struct k_work *work)
 {
-	if (current_conn != NULL && !link_encrypted) {
-		LOG_WRN("Link not encrypted in time, disconnecting");
-		bt_conn_disconnect(current_conn, BT_HCI_ERR_AUTH_FAIL);
+	int64_t now = k_uptime_get();
+	int64_t next = INT64_MAX;
+
+	k_mutex_lock(&unsecured_lock, K_FOREVER);
+	ARRAY_FOR_EACH(unsecured, i) {
+		if (unsecured[i].conn == NULL) {
+			continue;
+		}
+		if (unsecured[i].deadline <= now) {
+			LOG_WRN("Link not encrypted in time, disconnecting");
+			bt_conn_disconnect(unsecured[i].conn, BT_HCI_ERR_AUTH_FAIL);
+			/* Removed from the list when the disconnection completes. */
+			unsecured[i].deadline = INT64_MAX;
+		} else {
+			next = MIN(next, unsecured[i].deadline);
+		}
+	}
+	k_mutex_unlock(&unsecured_lock);
+
+	if (next != INT64_MAX) {
+		k_work_reschedule(&security_timeout_work, K_MSEC(next - now));
 	}
 }
 
@@ -76,20 +117,37 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	LOG_INF("Connected");
-	current_conn = bt_conn_ref(conn);
-	link_encrypted = false;
 
-	ble_shell_connected(conn);
+	err = hid_connected(conn);
+	if (err) {
+		LOG_WRN("HID service could not take the connection (err %d)", err);
+	}
 
 	/*
 	 * Ask the peer to encrypt the link: a bonded peer reuses its key, a new
-	 * one pairs. The shell and OTA services refuse access until then.
+	 * one pairs. The shell, OTA and HID services refuse access until then.
 	 */
 	err = bt_conn_set_security(conn, BT_SECURITY_L2);
 	if (err) {
 		LOG_WRN("Could not request encryption (err %d)", err);
 	}
-	k_work_schedule(&security_timeout_work, SECURITY_TIMEOUT);
+
+	k_mutex_lock(&unsecured_lock, K_FOREVER);
+	ARRAY_FOR_EACH(unsecured, i) {
+		if (unsecured[i].conn == NULL) {
+			unsecured[i].conn = bt_conn_ref(conn);
+			unsecured[i].deadline = k_uptime_get() + SECURITY_TIMEOUT_MS;
+			break;
+		}
+	}
+	k_mutex_unlock(&unsecured_lock);
+	k_work_schedule(&security_timeout_work, K_MSEC(SECURITY_TIMEOUT_MS));
+
+	/* Twice the data rate where the host supports it; harmless where not. */
+	(void)bt_conn_le_phy_update(conn, BT_CONN_LE_PHY_PARAM_2M);
+
+	/* Keep advertising for further devices. */
+	k_work_submit(&adv_work);
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
@@ -102,20 +160,43 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 	}
 
 	LOG_INF("Link encrypted");
-	link_encrypted = true;
-	k_work_cancel_delayable(&security_timeout_work);
+	unsecured_remove(conn);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_INF("Disconnected, reason 0x%02x %s", reason, bt_hci_err_to_str(reason));
 
-	k_work_cancel_delayable(&security_timeout_work);
-	if (current_conn != NULL) {
-		ble_shell_disconnected();
-		bt_conn_unref(current_conn);
-		current_conn = NULL;
+	unsecured_remove(conn);
+	hid_disconnected(conn);
+}
+
+/* Device Information Service serial number: the chip's unique ID, in hex. */
+static void set_serial_number(void)
+{
+	uint8_t id[8];
+	char serial[2 * sizeof(id) + 1];
+	ssize_t len = hwinfo_get_device_id(id, sizeof(id));
+	int err;
+
+	if (len <= 0) {
+		LOG_WRN("No device ID for the serial number (err %d)", (int)len);
+		return;
 	}
+
+	bin2hex(id, len, serial, sizeof(serial));
+	err = settings_runtime_set("bt/dis/serial", serial, strlen(serial));
+	if (err) {
+		LOG_WRN("Could not set the serial number (err %d)", err);
+	} else {
+		LOG_INF("Serial number %s", serial);
+	}
+}
+
+static void le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency,
+			     uint16_t timeout)
+{
+	LOG_INF("Connection interval %u.%02u ms", interval * 5 / 4, (interval * 125) % 100);
 }
 
 static void recycled(void)
@@ -128,6 +209,7 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
 	.security_changed = security_changed,
+	.le_param_updated = le_param_updated,
 	.recycled = recycled,
 };
 
@@ -225,6 +307,9 @@ int main(void)
 	if (!err) {
 		err = settings_load_subtree("imu");
 	}
+	if (!err) {
+		err = settings_load_subtree("hid");
+	}
 	if (err) {
 		LOG_ERR("Could not load settings, using defaults (err %d)", err);
 	}
@@ -248,6 +333,12 @@ int main(void)
 		return 0;
 	}
 
+	err = hid_init();
+	if (err) {
+		LOG_ERR("Could not set up the HID service (err %d)", err);
+		return 0;
+	}
+
 	err = bt_enable(NULL);
 	if (err) {
 		LOG_ERR("Bluetooth enable failed (err %d)", err);
@@ -258,6 +349,7 @@ int main(void)
 	if (err) {
 		LOG_ERR("Could not load Bluetooth settings (err %d)", err);
 	}
+	set_serial_number();
 
 	err = ble_shell_init();
 	if (err) {

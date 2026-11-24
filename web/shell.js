@@ -189,3 +189,21 @@ export function parseBonds(lines) {
 		pairing: summary[3] === "on",
 	};
 }
+
+export function parseHid(lines) {
+	const find = (pattern) => lines.map((line) => pattern.exec(line)).find(Boolean);
+	const list = (text) => (text.trim() === "none" ? [] : text.trim().split(" "));
+	const enabled = find(/^enabled:(.*)$/);
+	const hosts = find(/^hosts (\d+), listening to:(.*)$/);
+	const rate = find(/^sensor rate (\d+) Hz$/);
+
+	if (!enabled || !hosts || !rate) {
+		throw new Error("Unexpected reply to hid");
+	}
+	return {
+		enabled: list(enabled[1]),
+		hosts: Number(hosts[1]),
+		listening: list(hosts[2]),
+		rate: Number(rate[1]),
+	};
+}

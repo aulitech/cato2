@@ -17,12 +17,18 @@ struct bt_conn;
 	BT_UUID_128_ENCODE(0x6e400001, 0xb5a3, 0xf393, 0xe0a9, 0xe50e24dcca9e)
 
 /*
- * ble_shell.c: start the Bluetooth shell (once, after Bluetooth is enabled),
- * and tell it which connection to send output to.
+ * ble_shell.c: start the Bluetooth shell (once, after Bluetooth is enabled).
+ * Every connected device that subscribes shares the one shell.
  */
 int ble_shell_init(void);
-void ble_shell_connected(struct bt_conn *conn);
-void ble_shell_disconnected(void);
+
+/*
+ * hid.c: register the HID service (before Bluetooth is enabled) and tell it
+ * about each connection.
+ */
+int hid_init(void);
+int hid_connected(struct bt_conn *conn);
+void hid_disconnected(struct bt_conn *conn);
 
 /* blink.c: turn the LED off and stop blinking, ahead of power-off. */
 void blink_stop(void);
@@ -32,6 +38,9 @@ void blink_stop(void);
  * after settings have been loaded.
  */
 int imu_init(void);
+
+/* One reading with the current ranges: acceleration in g, rotation in deg/s. */
+int imu_sample(float accel_g[3], float gyro_dps[3]);
 
 /* Put the accelerometer and gyroscope in power-down. */
 int imu_power_down(void);
