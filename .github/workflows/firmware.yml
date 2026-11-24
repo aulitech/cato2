@@ -50,6 +50,8 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/key"
           printf '%s\n' "$KEY" > "$RUNNER_TEMP/key/signing.pem"
 
+      # The image's entrypoint is "bash -c", which also sets up the toolchain
+      # environment, so the whole script is passed as one argument.
       - name: Build
         run: |
           mkdir -p ncs
@@ -59,7 +61,8 @@ jobs:
             -e NCS_VERSION -e BOARD \
             -w /work/ncs \
             "ghcr.io/nrfconnect/sdk-nrf-toolchain:$NCS_VERSION" \
-            bash -euc '
+            '
+              set -eu
               git config --global --add safe.directory "*"
               if [ ! -d .west ]; then
                 west init -m https://github.com/nrfconnect/sdk-nrf --mr "$NCS_VERSION" .
