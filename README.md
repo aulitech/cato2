@@ -118,11 +118,7 @@ window and works offline. It bundles [xterm.js](https://xtermjs.org) (MIT) in
 `web/vendor`.
 
 The hosted copy is the Netlify project `auli-ng`, configured by
-`netlify.toml`. To publish changes:
-
-```sh
-npx netlify-cli deploy --prod
-```
+`netlify.toml`. It redeploys automatically on every push to `main`.
 
 **USB** – open the board's CDC ACM serial port (`/dev/cu.usbmodem*` on macOS,
 `/dev/ttyACM*` on Linux, a COM port on Windows) in any serial terminal, such as
