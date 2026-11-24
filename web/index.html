@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XIAO Sense Plus</title>
-<meta name="description" content="Bluetooth console and firmware upgrade for the XIAO nRF52840 Sense Plus">
+<meta name="description" content="Bluetooth console, controls and firmware upgrade for the XIAO nRF52840 Sense Plus">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#171b21" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
@@ -17,6 +17,7 @@
 	color-scheme: light dark;
 	--bg: #f4f5f7;
 	--panel: #ffffff;
+	--inset: #f4f5f7;
 	--border: #d9dde3;
 	--text: #1c2128;
 	--muted: #5d6673;
@@ -32,6 +33,7 @@
 	:root {
 		--bg: #0d1014;
 		--panel: #171b21;
+		--inset: #0d1014;
 		--border: #2c333c;
 		--text: #e3e7ec;
 		--muted: #94a0ae;
@@ -90,13 +92,16 @@ h2 { margin: 0; font-size: 13px; font-weight: 600; }
 #status[data-state="connected"]::before { background: var(--ok); }
 #status[data-state="connecting"]::before { background: var(--warn); }
 
-button, .file-button {
+button, input, select {
 	font: inherit;
+	color: var(--text);
+}
+
+button {
 	padding: 6px 12px;
 	border: 1px solid var(--border);
 	border-radius: 6px;
 	background: var(--panel);
-	color: var(--text);
 	cursor: pointer;
 }
 
@@ -107,36 +112,56 @@ button.primary {
 	font-weight: 600;
 }
 
-button:disabled { opacity: 0.5; cursor: default; }
+button.danger { color: var(--error); }
+button.small { padding: 2px 8px; font-size: 12px; }
+button:disabled, input:disabled, select:disabled { opacity: 0.5; cursor: default; }
+
+input[type="text"], input[type="number"], select {
+	min-width: 0;
+	padding: 5px 8px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--inset);
+}
+
+input[type="number"] { width: 6.5em; }
+code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 
 main {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) 360px;
+	grid-template-columns: minmax(0, 1fr) 420px;
 	gap: 16px;
 	padding: 16px;
 	flex: 1;
 	min-height: 0;
 }
 
-section {
+.card {
 	display: flex;
 	flex-direction: column;
-	min-height: 0;
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	background: var(--panel);
 	overflow: hidden;
 }
 
-.section-head {
+#console { min-height: 0; }
+
+.card-head {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 8px;
 	padding: 8px 12px;
 	border-bottom: 1px solid var(--border);
 }
 
-.section-head button { padding: 2px 8px; font-size: 12px; }
+.card-body {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 12px;
+}
 
 #terminal {
 	flex: 1;
@@ -145,34 +170,90 @@ section {
 	background: var(--terminal);
 }
 
-.ota-body {
+aside {
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
-	padding: 12px;
+	gap: 12px;
+	min-height: 0;
 	overflow-y: auto;
 }
 
+aside .card { flex: none; }
+
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row > label { color: var(--muted); font-size: 12px; }
+.grow { flex: 1; }
+.spread { justify-content: space-between; }
+
+.message { margin: 0; min-height: 1.45em; font-size: 12px; color: var(--muted); }
+.message.error { color: var(--error); }
+.note { margin: 0; font-size: 12px; color: var(--muted); }
+
+/* Blink pattern */
+#blink-preview { display: flex; gap: 4px; flex-wrap: wrap; min-height: 18px; }
+#blink-preview span, .swatch {
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	border: 1px solid var(--border);
+	background: var(--swatch, transparent);
+}
+#blink-palette button { display: inline-flex; padding: 4px; border-radius: 50%; }
+
+/* IMU */
+.sensor-grid {
+	display: grid;
+	grid-template-columns: auto 1fr 1fr 1fr;
+	gap: 6px 8px;
+	align-items: center;
+	font-size: 12px;
+}
+.sensor-grid .head { color: var(--muted); }
+.sensor-grid select { width: 100%; padding: 4px 6px; }
+
+.readout {
+	display: grid;
+	grid-template-columns: auto repeat(3, 1fr) auto;
+	gap: 2px 10px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: var(--inset);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+.readout .label, .readout .unit { color: var(--muted); }
+.readout .value { text-align: right; }
+
+details > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+details .card-body { padding: 10px 0 0; }
+#imu-reg-output {
+	margin: 0;
+	max-height: 140px;
+	overflow: auto;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: var(--inset);
+	font-size: 12px;
+}
+#imu-reg-output:empty { display: none; }
+
+/* Paired devices and firmware */
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { padding: 4px 6px 4px 0; text-align: left; vertical-align: top; }
+th, td { padding: 4px 6px 4px 0; text-align: left; vertical-align: middle; }
 th { color: var(--muted); font-weight: 500; }
-td:nth-child(3) { font-family: ui-monospace, Menlo, Consolas, monospace; }
+td:last-child, th:last-child { padding-right: 0; }
+#bonds-list td:last-child { text-align: right; }
 
-input[type="file"] { width: 100%; font: inherit; }
-
+input[type="file"] { width: 100%; }
 #file-info { margin: 6px 0 0; font-size: 12px; color: var(--muted); min-height: 1.45em; }
 #file-info.error { color: var(--error); }
-
 progress { width: 100%; height: 8px; }
 #progress-text { font-size: 12px; color: var(--muted); min-height: 1.45em; }
-
 #log { margin: 0; padding: 0; list-style: none; font-size: 12px; }
 #log li { padding: 2px 0; }
 #log .ok { color: var(--ok); font-weight: 600; }
 #log .warn { color: var(--warn); }
 #log .error { color: var(--error); }
-
-.note { margin: 0; font-size: 12px; color: var(--muted); }
 
 #unsupported {
 	margin: 16px 16px 0;
@@ -182,10 +263,11 @@ progress { width: 100%; height: 8px; }
 	color: var(--error);
 }
 
-@media (max-width: 820px) {
+@media (max-width: 900px) {
 	body { height: auto; }
-	main { grid-template-columns: 1fr; flex: none; }
-	#terminal { height: 55vh; flex: none; }
+	main { grid-template-columns: minmax(0, 1fr); flex: none; }
+	#terminal { height: 50vh; flex: none; }
+	aside { overflow: visible; }
 }
 </style>
 </head>
@@ -204,53 +286,218 @@ progress { width: 100%; height: 8px; }
 </p>
 
 <main>
-	<section>
-		<div class="section-head">
+	<section id="console" class="card">
+		<div class="card-head">
 			<h2>Console</h2>
-			<button id="clear">Clear</button>
+			<button id="clear" class="small">Clear</button>
 		</div>
 		<div id="terminal"></div>
 	</section>
 
-	<section>
-		<div class="section-head">
-			<h2>Firmware upgrade</h2>
-			<button id="refresh" disabled>Refresh</button>
-		</div>
-		<div class="ota-body">
-			<table>
-				<thead>
-					<tr><th>Slot</th><th>Version</th><th>Hash</th><th>State</th></tr>
-				</thead>
-				<tbody id="slots">
-					<tr><td colspan="4">Connect to see the board's images.</td></tr>
-				</tbody>
-			</table>
+	<aside id="controls">
+		<section class="card" data-card="device">
+			<div class="card-head">
+				<h2>Board</h2>
+				<button id="refresh-all" class="small" disabled>Refresh</button>
+			</div>
+			<div class="card-body">
+				<div class="row">
+					<label for="name-input">Name</label>
+					<input id="name-input" class="grow" type="text" maxlength="26" disabled>
+					<button id="name-apply" disabled>Rename</button>
+				</div>
+				<div class="row">
+					<button id="bootloader" disabled>Restart into USB bootloader</button>
+				</div>
+				<p class="message"></p>
+			</div>
+		</section>
 
-			<div>
-				<input id="file" type="file" accept=".zip,.bin">
-				<p id="file-info"></p>
+		<section class="card" data-card="blink">
+			<div class="card-head"><h2>Blink</h2></div>
+			<div class="card-body">
+				<div class="row">
+					<label for="blink-rate">Step time</label>
+					<input id="blink-rate" type="number" min="20" max="60000" step="10" disabled>
+					<span class="note">ms</span>
+				</div>
+				<div class="row">
+					<label for="blink-pattern">Pattern</label>
+					<input id="blink-pattern" class="grow mono" type="text" maxlength="32"
+					       spellcheck="false" autocapitalize="off" disabled>
+				</div>
+				<div class="row spread">
+					<div id="blink-palette" class="row"></div>
+					<button id="blink-backspace" class="small" disabled>Delete last</button>
+				</div>
+				<div id="blink-preview"></div>
+				<div class="row spread">
+					<p class="message"></p>
+					<button id="blink-apply" class="primary" disabled>Apply</button>
+				</div>
+			</div>
+		</section>
+
+		<section class="card" data-card="imu">
+			<div class="card-head">
+				<h2>IMU</h2>
+				<span id="imu-saved" class="note"></span>
+			</div>
+			<div class="card-body">
+				<div class="sensor-grid">
+					<span></span>
+					<span class="head">Rate (Hz)</span>
+					<span class="head">Range</span>
+					<span class="head">Mode</span>
+
+					<span>Accel</span>
+					<select id="accel-odr" aria-label="Accelerometer rate" disabled></select>
+					<select id="accel-range" aria-label="Accelerometer range" disabled></select>
+					<select id="accel-mode" aria-label="Accelerometer mode" disabled></select>
+
+					<span>Gyro</span>
+					<select id="gyro-odr" aria-label="Gyroscope rate" disabled></select>
+					<select id="gyro-range" aria-label="Gyroscope range" disabled></select>
+					<select id="gyro-mode" aria-label="Gyroscope mode" disabled></select>
+				</div>
+
+				<div class="readout">
+					<span class="label">Accel</span>
+					<span class="value" id="accel-x">–</span>
+					<span class="value" id="accel-y">–</span>
+					<span class="value" id="accel-z">–</span>
+					<span class="unit">m/s²</span>
+
+					<span class="label">Gyro</span>
+					<span class="value" id="gyro-x">–</span>
+					<span class="value" id="gyro-y">–</span>
+					<span class="value" id="gyro-z">–</span>
+					<span class="unit">dps</span>
+
+					<span class="label">Temp</span>
+					<span class="value" id="imu-temp">–</span>
+					<span></span>
+					<span></span>
+					<span class="unit">°C</span>
+				</div>
+
+				<div class="row spread">
+					<div class="row">
+						<button id="imu-read" disabled>Read</button>
+						<label><input id="imu-live" type="checkbox" disabled> Live</label>
+					</div>
+					<div class="row">
+						<button id="imu-save" disabled>Save</button>
+						<button id="imu-reset" disabled>Reset</button>
+					</div>
+				</div>
+				<p class="message"></p>
+
+				<details>
+					<summary>Registers</summary>
+					<div class="card-body">
+						<div class="row">
+							<label for="reg-read-addr">Read</label>
+							<input id="reg-read-addr" class="mono" type="text" placeholder="0x10"
+							       size="6" disabled>
+							<label for="reg-read-count">count</label>
+							<input id="reg-read-count" type="number" min="1" max="128" value="1"
+							       disabled>
+							<button id="reg-read" disabled>Read</button>
+						</div>
+						<div class="row">
+							<label for="reg-write-addr">Write</label>
+							<input id="reg-write-addr" class="mono" type="text" placeholder="0x10"
+							       size="6" disabled>
+							<label for="reg-write-value">value</label>
+							<input id="reg-write-value" class="mono" type="text" placeholder="0x40"
+							       size="6" disabled>
+							<button id="reg-write" disabled>Write</button>
+						</div>
+						<pre id="imu-reg-output" class="mono"></pre>
+					</div>
+				</details>
+			</div>
+		</section>
+
+		<section class="card" data-card="bonds">
+			<div class="card-head">
+				<h2>Paired devices</h2>
+				<span id="bonds-summary" class="note"></span>
+			</div>
+			<div class="card-body">
+				<table>
+					<tbody id="bonds-list">
+						<tr><td>Connect to see paired devices.</td></tr>
+					</tbody>
+				</table>
+				<div class="row spread">
+					<label><input id="bonds-pairing" type="checkbox" disabled>
+						Allow new devices to pair</label>
+					<button id="bonds-remove-all" class="small danger" disabled>Remove all</button>
+				</div>
+				<p class="message"></p>
+			</div>
+		</section>
+
+		<section class="card" data-card="sleep">
+			<div class="card-head"><h2>Sleep</h2></div>
+			<div class="card-body">
+				<div class="row">
+					<button id="sleep-motion" disabled>Sleep until moved</button>
+					<label for="sleep-threshold">threshold</label>
+					<input id="sleep-threshold" type="number" min="32" max="1968" value="125"
+					       disabled>
+					<span class="note">mg</span>
+				</div>
+				<div class="row">
+					<button id="sleep-off" disabled>Sleep until reset button</button>
+				</div>
+				<p class="note">Sleeping disconnects the board. It restarts when it wakes.</p>
+				<p class="message"></p>
+			</div>
+		</section>
+
+		<section class="card" data-card="firmware">
+			<div class="card-head">
+				<h2>Firmware upgrade</h2>
+				<button id="refresh" class="small" disabled>Refresh</button>
+			</div>
+			<div class="card-body">
+				<table>
+					<thead>
+						<tr><th>Slot</th><th>Version</th><th>Hash</th><th>State</th></tr>
+					</thead>
+					<tbody id="slots">
+						<tr><td colspan="4">Connect to see the board's images.</td></tr>
+					</tbody>
+				</table>
+
+				<div>
+					<input id="file" type="file" accept=".zip,.bin">
+					<p id="file-info"></p>
+					<p class="note">
+						Choose <code>build/dfu_application.zip</code> or a
+						<code>zephyr.signed.bin</code>.
+					</p>
+				</div>
+
+				<button id="upload" class="primary" disabled>Upload and restart</button>
+
+				<div>
+					<progress id="progress" max="1" value="0"></progress>
+					<div id="progress-text"></div>
+				</div>
+
+				<ul id="log"></ul>
+
 				<p class="note">
-					Choose <code>build/dfu_application.zip</code> or a
-					<code>zephyr.signed.bin</code>.
+					The board restarts into the new image and keeps it only if it
+					starts up correctly; otherwise it returns to the current one.
 				</p>
 			</div>
-
-			<button id="upload" class="primary" disabled>Upload and restart</button>
-
-			<div>
-				<progress id="progress" max="1" value="0"></progress>
-				<div id="progress-text"></div>
-			</div>
-
-			<ul id="log"></ul>
-
-			<p class="note">
-				The board restarts into the new image and keeps it only if it
-				starts up correctly; otherwise it returns to the current one.
-			</p>
-		</div>
-	</section>
+		</section>
+	</aside>
 </main>
 
 <script src="vendor/xterm.js"></script>

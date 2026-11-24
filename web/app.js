@@ -3,6 +3,8 @@
 // BLE console (Nordic UART Service) and OTA upgrade (MCUmgr SMP) over one
 // Web Bluetooth connection.
 
+import { initControls } from "./controls.js";
+import { ShellRunner } from "./shell.js";
 import * as smp from "./smp.js";
 
 const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
@@ -77,6 +79,26 @@ term.onData((data) => {
 	}
 });
 
+// The control cards run shell commands over the same stream as the console.
+const shell = new ShellRunner({
+	send: (text) => {
+		if (!state.nusRx) {
+			return Promise.reject(new Error("Not connected"));
+		}
+		return write(state.nusRx, encoder.encode(text));
+	},
+	display: (bytes) => term.write(bytes),
+});
+
+const controls = initControls({
+	shell,
+	onName: (name) => {
+		if (name) {
+			ui.deviceName.textContent = name;
+		}
+	},
+});
+
 function termNote(text) {
 	term.write(`\r\n\x1b[2m-- ${text} --\x1b[0m\r\n`);
 }
@@ -127,7 +149,8 @@ async function openServices() {
 	nusTx.addEventListener("characteristicvaluechanged", (event) => {
 		const value = event.target.value;
 
-		term.write(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+		// slice(): the runner may keep the bytes past this event.
+		shell.feed(new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice());
 	});
 	await nusTx.startNotifications();
 
@@ -162,9 +185,9 @@ function onConnected() {
 	setStatus("connected", "Connected");
 	ui.deviceName.textContent = state.device.name || "Unnamed device";
 	termNote(`connected to ${state.device.name || "device"}`);
-	// Ask the shell to draw a prompt.
-	write(state.nusRx, encoder.encode("\r")).catch(() => {});
 	updateControls();
+	// The first command also draws the shell prompt.
+	controls.refresh();
 	if (!state.busy) {
 		refreshSlots().catch((err) => log(`Could not read image list: ${err.message}`));
 	}
@@ -173,6 +196,7 @@ function onConnected() {
 function onDisconnected() {
 	state.nusRx = null;
 	state.smpChar = null;
+	shell.reset();
 	if (state.pending) {
 		clearTimeout(state.pending.timer);
 		state.pending.reject(new Error("Disconnected"));
@@ -472,6 +496,8 @@ function updateControls() {
 	ui.refresh.disabled = !connected || state.busy;
 	ui.file.disabled = state.busy;
 	ui.upload.disabled = !connected || state.busy || !state.firmware;
+	// No shell commands while an upgrade has the link busy.
+	controls.setConnected(connected && !state.busy);
 }
 
 ui.connect.addEventListener("click", async () => {

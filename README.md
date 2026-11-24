@@ -191,8 +191,10 @@ python tools/console.py
 It connects to the first board it finds; pass a name
 (`python tools/console.py "My Board"`) to pick one.
 
-**Web app** – a browser page with the console and firmware upgrade side by
-side, over one Bluetooth connection. It needs Chrome or Edge on a computer or
+**Web app** – a browser page with the console, controls for every command
+above (name, blink, IMU, paired devices, sleep, bootloader) and firmware
+upgrade, all over one Bluetooth connection. The controls run the same shell
+commands you would type, visibly in the console. It needs Chrome or Edge on a computer or
 Android; Safari, Firefox and iOS have no Web Bluetooth.
 
 Open <https://auli-ng.netlify.app>, click **Connect** and pick the board.

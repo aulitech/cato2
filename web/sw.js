@@ -4,12 +4,14 @@
 // to the network first, so an edited or redeployed app shows up on the next
 // load; the cached copy is used only when the server cannot be reached.
 
-const CACHE = "xiao-sense-plus-v1";
+const CACHE = "xiao-sense-plus-v2";
 
 const FILES = [
 	"./",
 	"index.html",
 	"app.js",
+	"controls.js",
+	"shell.js",
 	"smp.js",
 	"manifest.webmanifest",
 	"vendor/xterm.js",
