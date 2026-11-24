@@ -406,9 +406,30 @@ export function initControls({ shell, onName }) {
 			: "No computer is using it yet";
 	}
 
-	const hidAction = (id, command) => $(id).addEventListener("click",
-		() => act("hid", () => shell.run(typeof command === "function" ? command() : command,
-					       { timeout: 10000 })));
+	// When this computer is one of the board's HID hosts, what the board types
+	// and clicks comes straight back to this page: a typed space or Enter
+	// presses whichever button has focus, and a mouse click lands on the button
+	// under the pointer. Left alone, that button would run its command again,
+	// and again. So focus is taken off the button first, and clicks are ignored
+	// while a command runs and for a moment after it.
+	const HID_ECHO_MS = 500;
+	let hidBusy = false;
+	let hidQuietUntil = 0;
+
+	const hidAction = (id, command) => $(id).addEventListener("click", async () => {
+		if (hidBusy || performance.now() < hidQuietUntil) {
+			return;
+		}
+		hidBusy = true;
+		document.activeElement?.blur();
+		try {
+			await act("hid", () => shell.run(
+				typeof command === "function" ? command() : command, { timeout: 10000 }));
+		} finally {
+			hidBusy = false;
+			hidQuietUntil = performance.now() + HID_ECHO_MS;
+		}
+	});
 
 	hidAction("hid-move", () => `hid mouse move ${$("hid-dx").value || 0} ${$("hid-dy").value || 0}`);
 	hidAction("hid-click-left", "hid mouse click left");
