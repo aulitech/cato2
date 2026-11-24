@@ -35,6 +35,10 @@ const ui = {
 	file: $("file"),
 	fileInfo: $("file-info"),
 	upload: $("upload"),
+	latest: $("latest"),
+	latestInfo: $("latest-info"),
+	latestUse: $("latest-use"),
+	latestUf2: $("latest-uf2"),
 	progress: $("progress"),
 	progressText: $("progress-text"),
 	log: $("log"),
@@ -332,27 +336,79 @@ async function refreshSlots() {
 	return images;
 }
 
-async function chooseFile() {
-	const file = ui.file.files[0];
-
+/** Makes a firmware file the one to upload; get() resolves to its bytes. */
+async function selectFirmware(name, get, source = "") {
 	state.firmware = null;
 	ui.fileInfo.textContent = "";
 	ui.fileInfo.classList.remove("error");
 
-	if (file) {
-		try {
-			const bytes = new Uint8Array(await file.arrayBuffer());
-
-			state.firmware = await smp.loadFirmware(file.name, bytes);
-			ui.fileInfo.textContent =
-				`${state.firmware.name} · version ${state.firmware.version} · ` +
-				`${state.firmware.size.toLocaleString()} bytes`;
-		} catch (err) {
-			ui.fileInfo.textContent = err.message;
-			ui.fileInfo.classList.add("error");
-		}
+	try {
+		state.firmware = await smp.loadFirmware(name, await get());
+		ui.fileInfo.textContent =
+			`${source}${state.firmware.name} · version ${state.firmware.version} · ` +
+			`${state.firmware.size.toLocaleString()} bytes`;
+	} catch (err) {
+		ui.fileInfo.textContent = err.message;
+		ui.fileInfo.classList.add("error");
 	}
 	updateControls();
+}
+
+async function chooseFile() {
+	const file = ui.file.files[0];
+
+	if (file) {
+		await selectFirmware(file.name, async () => new Uint8Array(await file.arrayBuffer()));
+	} else {
+		state.firmware = null;
+		ui.fileInfo.textContent = "";
+		updateControls();
+	}
+}
+
+// The Firmware workflow (.github/workflows/firmware.yml) publishes each build
+// of main twice: on the "firmware" branch, which this page can read from
+// another origin, and as a release, which gives a proper file download.
+// firmware.json describes the build.
+const REPO = "aulitech/xiao-nrf52840-sense-plus";
+const FIRMWARE_DIR = `https://raw.githubusercontent.com/${REPO}/firmware/`;
+const RELEASE_DIR = `https://github.com/${REPO}/releases/download/firmware-latest/`;
+
+async function fetchFirmwareFile(name) {
+	const response = await fetch(FIRMWARE_DIR + name, { cache: "no-cache" });
+
+	if (!response.ok) {
+		throw new Error(`Could not download ${name} (${response.status})`);
+	}
+	return response;
+}
+
+async function showLatestFirmware() {
+	let latest;
+
+	try {
+		latest = await (await fetchFirmwareFile("firmware.json")).json();
+	} catch {
+		return; // none published: only the file picker is offered
+	}
+	if (!latest.dfu || !latest.usb) {
+		return;
+	}
+
+	const built = new Date(latest.built);
+	const when = Number.isNaN(built.getTime()) ? "" : ` · built ${built.toLocaleString()}`;
+
+	ui.latestInfo.textContent =
+		`Latest build: version ${latest.version} · ${String(latest.commit).slice(0, 7)}${when}`;
+	ui.latestUf2.href = RELEASE_DIR + latest.usb;
+	ui.latestUse.addEventListener("click", async () => {
+		ui.file.value = "";
+		ui.latestUse.disabled = true;
+		await selectFirmware(latest.dfu, async () =>
+			new Uint8Array(await (await fetchFirmwareFile(latest.dfu)).arrayBuffer()),
+			"Latest build: ");
+	});
+	ui.latest.hidden = false;
 }
 
 function setProgress(fraction, text) {
@@ -495,6 +551,7 @@ function updateControls() {
 	ui.connect.disabled = state.busy;
 	ui.refresh.disabled = !connected || state.busy;
 	ui.file.disabled = state.busy;
+	ui.latestUse.disabled = state.busy;
 	ui.upload.disabled = !connected || state.busy || !state.firmware;
 	// No shell commands while an upgrade has the link busy.
 	controls.setConnected(connected && !state.busy);
@@ -588,3 +645,4 @@ if (!navigator.bluetooth) {
 	updateControls();
 }
 setStatus("disconnected", "Disconnected");
+showLatestFirmware();

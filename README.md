@@ -56,14 +56,14 @@ Outputs:
 
 | File | Use |
 | --- | --- |
-| `build/first_flash.uf2` | MCUboot + signed app, for the first flash over USB |
-| `build/dfu_application.zip` | OTA update package |
+| `build/usb-upgrade.uf2` | MCUboot + signed app, for the first flash over USB |
+| `build/cato.zip` | OTA update package |
 
 ## First flash (USB)
 
 1. Double-tap the reset button. The board mounts as a USB drive named
    `XIAO-SENSE`.
-2. Copy `build/first_flash.uf2` onto the drive.
+2. Copy `build/usb-upgrade.uf2` onto the drive.
 
 A board already running this firmware can skip the button: the `bootloader`
 shell command resets it into the same USB drive mode.
@@ -313,8 +313,14 @@ the VS Code serial terminal or `screen`.
 
 ## OTA upgrade (BLE)
 
+The web app's **Firmware upgrade** card offers the most recent build of `main`
+(see [Published builds](#published-builds)): **Use latest build**, then
+**Upload and restart**.
+
+For your own build:
+
 1. Bump the version in `VERSION` and rebuild.
-2. Upload `build/dfu_application.zip` with the web app (see
+2. Upload `build/cato.zip` with the web app (see
    [Connecting](#connecting)) or with **nRF Connect Device Manager**
    (iOS/Android).
 
@@ -324,6 +330,25 @@ computer using the board as a mouse does not block the upgrade.
 MCUboot swaps the new image in on the next reset. The app confirms the image
 once Bluetooth is up; an image that never gets that far is reverted on the
 following reset.
+
+## Published builds
+
+Every push to `main` that changes the firmware is built by GitHub Actions
+(`.github/workflows/firmware.yml`) with the project's signing key and published
+as the [`firmware-latest`](https://github.com/aulitech/xiao-nrf52840-sense-plus/releases/tag/firmware-latest)
+release:
+
+| File | Use |
+| --- | --- |
+| `usb-upgrade.uf2` | First flash over USB |
+| `cato.zip` | Upgrade over Bluetooth |
+| `firmware.json` | Version, commit and build time |
+
+The same files are the only commit on the `firmware` branch, which is where the
+web app reads them from. A board accepts the published upgrade only if its
+bootloader has the project's key, that is, if it was last flashed over USB with
+a published `usb-upgrade.uf2`. A board flashed from a local build without the
+key needs that USB flash once.
 
 ## Signing key
 
@@ -340,11 +365,13 @@ MCUBOOT_SIGNING_KEY=~/.mcuboot/xiao-nrf52840-sense-plus.pem \
     west build -p -b xiao_ble/nrf52840/sense --sysbuild
 ```
 
-The variable is read when the build is configured, so use a fresh build
-directory (`-p`) when switching keys.
+A key at exactly that path, `~/.mcuboot/xiao-nrf52840-sense-plus.pem`, is used
+without setting the variable, so on a machine that has the project's key every
+build is signed with it. The key is chosen when the build is configured, so use
+a fresh build directory (`-p`) when switching keys.
 
 Changing the key changes the bootloader. A board must be flashed once over USB
-with the new `first_flash.uf2`; after that it rejects OTA images signed with
+with the new `usb-upgrade.uf2`; after that it rejects OTA images signed with
 any other key, and an OTA image signed with the new key is rejected by boards
 still running the old bootloader. If the key is lost, deployed boards can only
 be updated over USB.

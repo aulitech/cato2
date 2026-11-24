@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: MIT
+#
+# Builds the firmware with the project's signing key and publishes it twice:
+# as the rolling "firmware-latest" release, and as the only commit on the
+# "firmware" branch, which is where the web app's Firmware card reads it from.
+
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "web/**"
+      - "tools/**"
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: firmware
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  NCS_VERSION: v3.4.2
+  BOARD: xiao_ble/nrf52840/sense
+  RELEASE_TAG: firmware-latest
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Restore the nRF Connect SDK
+        id: sdk
+        uses: actions/cache@v4
+        with:
+          path: ncs
+          key: ncs-${{ env.NCS_VERSION }}
+
+      - name: Write the signing key
+        env:
+          KEY: ${{ secrets.MCUBOOT_SIGNING_KEY }}
+        run: |
+          test -n "$KEY" || { echo "::error::MCUBOOT_SIGNING_KEY secret is not set"; exit 1; }
+          mkdir -m 700 "$RUNNER_TEMP/key"
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/key/signing.pem"
+
+      - name: Build
+        run: |
+          mkdir -p ncs
+          docker run --rm \
+            -v "$PWD:/work" -v "$RUNNER_TEMP/key:/key:ro" \
+            -e MCUBOOT_SIGNING_KEY=/key/signing.pem \
+            -e NCS_VERSION -e BOARD \
+            -w /work/ncs \
+            "ghcr.io/nrfconnect/sdk-nrf-toolchain:$NCS_VERSION" \
+            bash -euc '
+              git config --global --add safe.directory "*"
+              if [ ! -d .west ]; then
+                west init -m https://github.com/nrfconnect/sdk-nrf --mr "$NCS_VERSION" .
+                west update --narrow -o=--depth=1
+              fi
+              west build -p -b "$BOARD" --sysbuild -d /work/app/build /work/app
+            '
+          rm -rf "$RUNNER_TEMP/key"
+
+      - name: Collect the files
+        run: |
+          mkdir out
+          cp app/build/usb-upgrade.uf2 app/build/cato.zip out/
+          version=$(awk -F' *= *' '
+            /^VERSION_MAJOR/ { a = $2 } /^VERSION_MINOR/ { b = $2 } /^PATCHLEVEL/ { c = $2 }
+            END { print a "." b "." c }' app/VERSION)
+          cat > out/firmware.json <<JSON
+          {
+            "version": "$version",
+            "commit": "$GITHUB_SHA",
+            "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "dfu": "cato.zip",
+            "usb": "usb-upgrade.uf2"
+          }
+          JSON
+          cat out/firmware.json
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: out
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: app
+        run: |
+          gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
+          gh release create "$RELEASE_TAG" ../out/* \
+            --target "$GITHUB_SHA" \
+            --title "Latest firmware" \
+            --notes "Built from ${GITHUB_SHA} and signed with the project key. Replaced on every push to main.
+
+          - \`usb-upgrade.uf2\`: first flash over USB (copy to the bootloader drive)
+          - \`cato.zip\`: upgrade over Bluetooth"
+
+      # Release downloads cannot be read by a web page on another site, raw
+      # branch content can. One commit, replaced each time, so nothing piles up.
+      - name: Publish the firmware branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: out
+        run: |
+          git init -q -b firmware
+          git add .
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Firmware built from ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" firmware

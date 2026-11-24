@@ -322,7 +322,7 @@ export function parseImageHeader(image) {
 	const view = new DataView(image.buffer, image.byteOffset, image.byteLength);
 
 	if (view.getUint32(0, true) !== MCUBOOT_MAGIC) {
-		throw new Error("Not an MCUboot image (use zephyr.signed.bin or dfu_application.zip)");
+		throw new Error("Not an MCUboot image (use zephyr.signed.bin or cato.zip)");
 	}
 
 	const major = view.getUint8(20);
@@ -391,7 +391,7 @@ export async function unzip(archive) {
 
 /**
  * Extracts the application image from a firmware file: either a signed
- * MCUboot .bin, or the dfu_application.zip produced by the build.
+ * MCUboot .bin, or the cato.zip produced by the build.
  */
 export async function loadFirmware(fileName, bytes) {
 	let image = bytes;
