@@ -97,6 +97,33 @@ pip install bleak
 python tools/console.py
 ```
 
+**Web app** – a browser page with the console and firmware upgrade side by
+side, over one Bluetooth connection. It needs Chrome or Edge on a computer or
+Android; Safari, Firefox and iOS have no Web Bluetooth.
+
+Open <https://auli-ng.netlify.app>, click **Connect** and pick the board.
+
+To run it locally instead:
+
+```sh
+python3 -m http.server -d web 8000
+```
+
+Then open <http://localhost:8000>. The page must be served from `localhost` or
+over HTTPS; opening `index.html` as a file does not work.
+
+The page is an installable app: use the install button in the browser's address
+bar (or *Add to Home screen* on Android). Once installed it opens in its own
+window and works offline. It bundles [xterm.js](https://xtermjs.org) (MIT) in
+`web/vendor`.
+
+The hosted copy is the Netlify project `auli-ng`, configured by
+`netlify.toml`. To publish changes:
+
+```sh
+npx netlify-cli deploy --prod
+```
+
 **USB** – open the board's CDC ACM serial port (`/dev/cu.usbmodem*` on macOS,
 `/dev/ttyACM*` on Linux, a COM port on Windows) in any serial terminal, such as
 the VS Code serial terminal or `screen`.
@@ -108,8 +135,12 @@ entry first, or the connection is refused.
 ## OTA upgrade (BLE)
 
 1. Bump the version in `VERSION` and rebuild.
-2. Open **nRF Connect Device Manager** (iOS/Android), connect to
-   **XIAO Sense Plus**, and upload `build/dfu_application.zip`.
+2. Upload `build/dfu_application.zip` with the web app (see
+   [Connecting](#connecting)) or with **nRF Connect Device Manager**
+   (iOS/Android).
+
+The board accepts one Bluetooth connection at a time, so disconnect any other
+console session first.
 
 MCUboot swaps the new image in on the next reset. The app confirms the image
 once Bluetooth is up; an image that never gets that far is reverted on the

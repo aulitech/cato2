@@ -1,0 +1,260 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XIAO Sense Plus</title>
+<meta name="description" content="Bluetooth console and firmware upgrade for the XIAO nRF52840 Sense Plus">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171b21" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+:root {
+	color-scheme: light dark;
+	--bg: #f4f5f7;
+	--panel: #ffffff;
+	--border: #d9dde3;
+	--text: #1c2128;
+	--muted: #5d6673;
+	--accent: #0b6bcb;
+	--accent-text: #ffffff;
+	--ok: #1a7f37;
+	--warn: #9a6700;
+	--error: #cf222e;
+	--terminal: #11151a;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #0d1014;
+		--panel: #171b21;
+		--border: #2c333c;
+		--text: #e3e7ec;
+		--muted: #94a0ae;
+		--accent: #4c9bf0;
+		--accent-text: #0d1014;
+		--ok: #4ac26b;
+		--warn: #d4a72c;
+		--error: #ff7b72;
+	}
+}
+
+* { box-sizing: border-box; }
+
+body {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	height: 100dvh;
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--border);
+	background: var(--panel);
+}
+
+h1 { margin: 0; font-size: 16px; font-weight: 600; }
+h2 { margin: 0; font-size: 13px; font-weight: 600; }
+
+#device-name { color: var(--muted); }
+
+#status {
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--muted);
+}
+
+#status::before {
+	content: "";
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--muted);
+}
+
+#status[data-state="connected"]::before { background: var(--ok); }
+#status[data-state="connecting"]::before { background: var(--warn); }
+
+button, .file-button {
+	font: inherit;
+	padding: 6px 12px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--panel);
+	color: var(--text);
+	cursor: pointer;
+}
+
+button.primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-text);
+	font-weight: 600;
+}
+
+button:disabled { opacity: 0.5; cursor: default; }
+
+main {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 360px;
+	gap: 16px;
+	padding: 16px;
+	flex: 1;
+	min-height: 0;
+}
+
+section {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--panel);
+	overflow: hidden;
+}
+
+.section-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+}
+
+.section-head button { padding: 2px 8px; font-size: 12px; }
+
+#terminal {
+	flex: 1;
+	min-height: 0;
+	padding: 8px;
+	background: var(--terminal);
+}
+
+.ota-body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 12px;
+	overflow-y: auto;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 4px 6px 4px 0; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+td:nth-child(3) { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+input[type="file"] { width: 100%; font: inherit; }
+
+#file-info { margin: 6px 0 0; font-size: 12px; color: var(--muted); min-height: 1.45em; }
+#file-info.error { color: var(--error); }
+
+progress { width: 100%; height: 8px; }
+#progress-text { font-size: 12px; color: var(--muted); min-height: 1.45em; }
+
+#log { margin: 0; padding: 0; list-style: none; font-size: 12px; }
+#log li { padding: 2px 0; }
+#log .ok { color: var(--ok); font-weight: 600; }
+#log .warn { color: var(--warn); }
+#log .error { color: var(--error); }
+
+.note { margin: 0; font-size: 12px; color: var(--muted); }
+
+#unsupported {
+	margin: 16px 16px 0;
+	padding: 10px 12px;
+	border: 1px solid var(--error);
+	border-radius: 8px;
+	color: var(--error);
+}
+
+@media (max-width: 820px) {
+	body { height: auto; }
+	main { grid-template-columns: 1fr; flex: none; }
+	#terminal { height: 55vh; flex: none; }
+}
+</style>
+</head>
+<body>
+
+<header>
+	<h1>XIAO Sense Plus</h1>
+	<span id="device-name"></span>
+	<span id="status" data-state="disconnected">Disconnected</span>
+	<button id="connect" class="primary">Connect</button>
+</header>
+
+<p id="unsupported" hidden>
+	This browser has no Web Bluetooth. Use Chrome or Edge on a computer or
+	Android, and open the page from <code>localhost</code> or over HTTPS.
+</p>
+
+<main>
+	<section>
+		<div class="section-head">
+			<h2>Console</h2>
+			<button id="clear">Clear</button>
+		</div>
+		<div id="terminal"></div>
+	</section>
+
+	<section>
+		<div class="section-head">
+			<h2>Firmware upgrade</h2>
+			<button id="refresh" disabled>Refresh</button>
+		</div>
+		<div class="ota-body">
+			<table>
+				<thead>
+					<tr><th>Slot</th><th>Version</th><th>Hash</th><th>State</th></tr>
+				</thead>
+				<tbody id="slots">
+					<tr><td colspan="4">Connect to see the board's images.</td></tr>
+				</tbody>
+			</table>
+
+			<div>
+				<input id="file" type="file" accept=".zip,.bin">
+				<p id="file-info"></p>
+				<p class="note">
+					Choose <code>build/dfu_application.zip</code> or a
+					<code>zephyr.signed.bin</code>.
+				</p>
+			</div>
+
+			<button id="upload" class="primary" disabled>Upload and restart</button>
+
+			<div>
+				<progress id="progress" max="1" value="0"></progress>
+				<div id="progress-text"></div>
+			</div>
+
+			<ul id="log"></ul>
+
+			<p class="note">
+				The board restarts into the new image and keeps it only if it
+				starts up correctly; otherwise it returns to the current one.
+			</p>
+		</div>
+	</section>
+</main>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
