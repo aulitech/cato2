@@ -16,8 +16,6 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/reboot.h>
 #include <hal/nrf_power.h>
-#include <bluetooth/services/nus.h>
-#include <shell/shell_bt_nus.h>
 #include <app_version.h>
 
 #include "app.h"
@@ -27,15 +25,18 @@ LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 /* Value the Adafruit bootloader looks for in GPREGRET to stay in UF2 mode. */
 #define UF2_BOOTLOADER_MAGIC 0x57
 
-static struct k_work adv_work;
+/* How long a new connection gets to encrypt the link before it is dropped. */
+#define SECURITY_TIMEOUT K_SECONDS(30)
 
-/* Name set with the "name" command, loaded from settings before Bluetooth is up. */
-static char saved_name[CONFIG_BT_DEVICE_NAME_MAX + 1];
+static struct k_work adv_work;
+static struct k_work_delayable security_timeout_work;
+static struct bt_conn *current_conn;
+static bool link_encrypted;
 
 static const uint8_t ad_flags[] = { BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR };
 
 static const struct bt_data sd[] = {
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, APP_UUID_NUS_SERVICE_VAL),
 };
 
 /* The advertised name can change at run time, so the data is built on demand. */
@@ -59,6 +60,14 @@ static void adv_work_handler(struct k_work *work)
 	}
 }
 
+static void security_timeout_handler(struct k_work *work)
+{
+	if (current_conn != NULL && !link_encrypted) {
+		LOG_WRN("Link not encrypted in time, disconnecting");
+		bt_conn_disconnect(current_conn, BT_HCI_ERR_AUTH_FAIL);
+	}
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
@@ -67,13 +76,46 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	LOG_INF("Connected");
-	shell_bt_nus_enable(conn);
+	current_conn = bt_conn_ref(conn);
+	link_encrypted = false;
+
+	ble_shell_connected(conn);
+
+	/*
+	 * Ask the peer to encrypt the link: a bonded peer reuses its key, a new
+	 * one pairs. The shell and OTA services refuse access until then.
+	 */
+	err = bt_conn_set_security(conn, BT_SECURITY_L2);
+	if (err) {
+		LOG_WRN("Could not request encryption (err %d)", err);
+	}
+	k_work_schedule(&security_timeout_work, SECURITY_TIMEOUT);
+}
+
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+			     enum bt_security_err err)
+{
+	if (err || level < BT_SECURITY_L2) {
+		LOG_WRN("Link not secured (%s), disconnecting", bt_security_err_to_str(err));
+		bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
+		return;
+	}
+
+	LOG_INF("Link encrypted");
+	link_encrypted = true;
+	k_work_cancel_delayable(&security_timeout_work);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_INF("Disconnected, reason 0x%02x %s", reason, bt_hci_err_to_str(reason));
-	shell_bt_nus_disable();
+
+	k_work_cancel_delayable(&security_timeout_work);
+	if (current_conn != NULL) {
+		ble_shell_disconnected();
+		bt_conn_unref(current_conn);
+		current_conn = NULL;
+	}
 }
 
 static void recycled(void)
@@ -85,28 +127,9 @@ static void recycled(void)
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.security_changed = security_changed,
 	.recycled = recycled,
 };
-
-static int app_settings_set(const char *name, size_t len, settings_read_cb read_cb,
-			    void *cb_arg)
-{
-	ssize_t rc;
-
-	if (!settings_name_steq(name, "name", NULL)) {
-		return -ENOENT;
-	}
-	if (len > CONFIG_BT_DEVICE_NAME_MAX) {
-		return -EINVAL;
-	}
-
-	memset(saved_name, 0, sizeof(saved_name));
-	rc = read_cb(cb_arg, saved_name, len);
-
-	return rc < 0 ? rc : 0;
-}
-
-SETTINGS_STATIC_HANDLER_DEFINE(app, "app", NULL, app_settings_set, NULL, NULL);
 
 static int cmd_name(const struct shell *sh, size_t argc, char **argv)
 {
@@ -157,12 +180,7 @@ static int cmd_name(const struct shell *sh, size_t argc, char **argv)
 	build_ad(ad);
 	(void)bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 
-	err = settings_save_one("app/name", name, len);
-	if (err) {
-		shell_error(sh, "Applied, but not saved (err %d)", err);
-		return err;
-	}
-
+	/* Bluetooth stores the name in settings itself. */
 	return 0;
 }
 
@@ -191,10 +209,21 @@ int main(void)
 	int err;
 
 	LOG_INF("XIAO nRF52840 Sense Plus, firmware %s", APP_VERSION_STRING);
+	crash_report();
 
+	/*
+	 * Application settings first; the Bluetooth ones (bonds, name) can only
+	 * be loaded once Bluetooth is enabled.
+	 */
 	err = settings_subsys_init();
 	if (!err) {
-		err = settings_load();
+		err = settings_load_subtree("app");
+	}
+	if (!err) {
+		err = settings_load_subtree("blink");
+	}
+	if (!err) {
+		err = settings_load_subtree("imu");
 	}
 	if (err) {
 		LOG_ERR("Could not load settings, using defaults (err %d)", err);
@@ -210,26 +239,32 @@ int main(void)
 
 	imu_init();
 
+	k_work_init(&adv_work, adv_work_handler);
+	k_work_init_delayable(&security_timeout_work, security_timeout_handler);
+
+	err = bonds_init();
+	if (err) {
+		LOG_ERR("Could not set up pairing (err %d)", err);
+		return 0;
+	}
+
 	err = bt_enable(NULL);
 	if (err) {
 		LOG_ERR("Bluetooth enable failed (err %d)", err);
 		return 0;
 	}
 
-	if (saved_name[0] != '\0') {
-		err = bt_set_name(saved_name);
-		if (err) {
-			LOG_WRN("Could not restore the saved name (err %d)", err);
-		}
+	err = settings_load_subtree("bt");
+	if (err) {
+		LOG_ERR("Could not load Bluetooth settings (err %d)", err);
 	}
 
-	err = shell_bt_nus_init();
+	err = ble_shell_init();
 	if (err) {
-		LOG_ERR("Failed to initialize BT NUS shell (err %d)", err);
+		LOG_ERR("Failed to start the Bluetooth shell (err %d)", err);
 		return 0;
 	}
 
-	k_work_init(&adv_work, adv_work_handler);
 	k_work_submit(&adv_work);
 
 	/*

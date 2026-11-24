@@ -7,19 +7,21 @@ Zephyr / nRF Connect SDK starter application for the
   (NUS) and over USB serial
 - **OTA upgrade** – MCUmgr/SMP over Bluetooth, with MCUboot swapping in the new
   image and reverting it if it fails to start
+- **Pairing** – the Bluetooth console and OTA need an encrypted link; up to
+  five paired devices are remembered
 - **No debug probe needed** – MCUboot is chain-loaded by the board's stock
   Adafruit UF2 bootloader, so the first flash is drag-and-drop
 
 The app blinks the RGB LED and adds shell commands to set the blink rate and
-pattern (`blink`), rename the board (`name`), read and fully configure the
-on-board LSM6DS3TR-C IMU (`imu`), sleep until reset or motion (`sleep`), and
-restart into the USB bootloader (`bootloader`).
+pattern (`blink`), rename the board (`name`), manage paired devices (`bonds`),
+read and fully configure the on-board LSM6DS3TR-C IMU (`imu`), sleep until
+reset or motion (`sleep`), and restart into the USB bootloader (`bootloader`).
 
 > **Verified on hardware** (XIAO nRF52840 Sense, UF2 bootloader 0.6.1): UF2 first
-> flash, MCUboot chain-load, the shell over BLE and USB, the `accel` and `blink`
-> commands (including persistence), and OTA upgrades
-> in both directions. MCUboot's automatic revert of a bad image has not been
-> exercised.
+> flash, MCUboot chain-load, the shell over BLE and USB, every shell command
+> below, pairing with a Mac, and OTA upgrades in both directions. Not exercised:
+> MCUboot's automatic revert of a bad image, refusing a sixth or locked-out
+> device, and pairing from a phone.
 
 ## Requirements
 
@@ -73,6 +75,9 @@ Type `help` for the command list.
 bt_nus:~$ accel
 accel x=0.12 y=-0.34 z=9.79 m/s^2
 ```
+
+If the firmware crashes it restarts by itself, and the next boot logs what
+failed (`Restarted after a crash: ...`).
 
 ### Blink
 
@@ -130,6 +135,34 @@ which stores the chip's FIFO, interrupt, control and tap/wake-up registers.
 The `sleep` command takes the IMU over; the saved or default configuration is
 restored when the board wakes.
 
+### Pairing
+
+The Bluetooth console and OTA service only work over an encrypted link, so a
+phone or computer pairs with the board the first time it connects; most ask
+you to confirm. Up to five paired devices (bonds) are remembered across resets
+and upgrades. The USB console needs no pairing.
+
+```
+bt_nus:~$ bonds
+1  80:A9:97:09:B1:31 (public)  (connected)
+1 of 5 bonds used, pairing on
+```
+
+- `bonds` – list the bonded devices
+- `bonds remove <number|all>` – forget one device, or all of them
+- `bonds pairing <on|off>` – accept or refuse new devices; kept across resets
+
+The board has no display or buttons, so pairing only encrypts the link: it
+cannot check who is pairing. Any device in range can pair while pairing is on
+and a slot is free, so switch it off (`bonds pairing off`) once your own
+devices are bonded. With all five slots in use, remove a bond before pairing
+another device.
+
+If a bond is removed on one side only, the other side's connection attempts
+fail: remove ("forget") the board on the phone or computer too, then pair
+again. The same applies to a device that was bonded to the board under other
+firmware.
+
 ### Sleep
 
 `sleep` powers the board down to its lowest-power state. Bluetooth and USB
@@ -184,10 +217,6 @@ The hosted copy is the Netlify project `auli-ng`, configured by
 **USB** – open the board's CDC ACM serial port (`/dev/cu.usbmodem*` on macOS,
 `/dev/ttyACM*` on Linux, a COM port on Windows) in any serial terminal, such as
 the VS Code serial terminal or `screen`.
-
-The firmware does not support pairing. If the board was previously bonded to
-your phone or computer under other firmware, remove ("forget") that old device
-entry first, or the connection is refused.
 
 ## OTA upgrade (BLE)
 
@@ -249,9 +278,12 @@ Defined in `dts/mcuboot_partitions.dtsi`, shared by the app and MCUboot.
 - **Signing key** – by default images are signed with MCUboot's public
   development key, so anyone can sign an image the bootloader will accept. Build
   with your own key as described under [Signing key](#signing-key).
-- **Open access** – the console and the OTA service accept unauthenticated,
-  unencrypted connections from any device in range. Require pairing before
-  deploying.
+- **Pairing is unauthenticated** – links are encrypted, but any device in
+  range can pair while pairing is on (see [Pairing](#pairing)). Switch pairing
+  off after setting up, or add a passkey or out-of-band step if the product
+  can support one.
+- **USB console is open** – anyone with physical access gets the shell,
+  including `bonds` and `bootloader`.
 
 ## License
 
