@@ -10,11 +10,13 @@ Zephyr / nRF Connect SDK starter application for the
 - **No debug probe needed** – MCUboot is chain-loaded by the board's stock
   Adafruit UF2 bootloader, so the first flash is drag-and-drop
 
-The app cycles the RGB LED red, green, blue (one second each) and adds an `accel` shell command that reads the
-on-board LSM6DS3TR-C IMU.
+The app blinks the RGB LED and adds two shell commands: `blink`, which sets
+the blink rate and pattern, and `accel`, which reads the on-board LSM6DS3TR-C
+IMU.
 
 > **Verified on hardware** (XIAO nRF52840 Sense, UF2 bootloader 0.6.1): UF2 first
-> flash, MCUboot chain-load, the BLE shell and `accel` command, and OTA upgrades
+> flash, MCUboot chain-load, the shell over BLE and USB, the `accel` and `blink`
+> commands (including persistence), and OTA upgrades
 > in both directions. MCUboot's automatic revert of a bad image has not been
 > exercised.
 
@@ -67,6 +69,24 @@ Type `help` for the command list.
 bt_nus:~$ accel
 accel x=0.12 y=-0.34 z=9.79 m/s^2
 ```
+
+### Blink
+
+The `blink` command shows or changes how the RGB LED blinks. Changes take
+effect immediately and are kept across resets and OTA upgrades.
+
+```
+bt_nus:~$ blink
+rate 1000 ms, pattern rgb
+bt_nus:~$ blink rate 250
+bt_nus:~$ blink pattern r-b-w
+```
+
+- `blink rate <ms>` – time per pattern step, 20 to 60000 ms
+- `blink pattern <steps>` – up to 32 steps, one character each: `r` `g` `b`
+  red, green, blue; `y` `c` `m` yellow, cyan, magenta; `w` white; `-` off
+
+### Connecting
 
 **BLE** – connect to **XIAO Sense Plus** with any Nordic UART Service terminal,
 e.g. the UART feature in nRF Toolbox or the Bluefruit Connect app. From a
