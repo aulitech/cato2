@@ -18,7 +18,12 @@
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+/* Red, green, blue */
+static const struct gpio_dt_spec leds[] = {
+	GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios),
+	GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios),
+	GPIO_DT_SPEC_GET(DT_ALIAS(led2), gpios),
+};
 static const struct device *const imu = DEVICE_DT_GET(DT_NODELABEL(lsm6ds3tr_c));
 
 static struct k_work adv_work;
@@ -105,8 +110,10 @@ int main(void)
 
 	LOG_INF("XIAO nRF52840 Sense Plus, firmware %s", APP_VERSION_STRING);
 
-	if (gpio_is_ready_dt(&led)) {
-		gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+	ARRAY_FOR_EACH(leds, i) {
+		if (gpio_is_ready_dt(&leds[i])) {
+			gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
+		}
 	}
 
 	if (device_is_ready(imu)) {
@@ -148,8 +155,11 @@ int main(void)
 	}
 
 	while (1) {
-		gpio_pin_toggle_dt(&led);
-		k_msleep(500);
+		ARRAY_FOR_EACH(leds, i) {
+			gpio_pin_set_dt(&leds[i], 1);
+			k_msleep(1000);
+			gpio_pin_set_dt(&leds[i], 0);
+		}
 	}
 
 	return 0;

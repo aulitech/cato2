@@ -3,18 +3,20 @@
 Zephyr / nRF Connect SDK starter application for the
 [Seeed Studio XIAO nRF52840 Sense Plus](https://wiki.seeedstudio.com/XIAO_BLE/).
 
-- **BLE console** – the Zephyr shell and log output over the Nordic UART
-  Service (NUS)
+- **Console** – the Zephyr shell and log output over the Nordic UART Service
+  (NUS) and over USB serial
 - **OTA upgrade** – MCUmgr/SMP over Bluetooth, with MCUboot swapping in the new
   image and reverting it if it fails to start
 - **No debug probe needed** – MCUboot is chain-loaded by the board's stock
   Adafruit UF2 bootloader, so the first flash is drag-and-drop
 
-The app blinks the red LED and adds an `accel` shell command that reads the
+The app cycles the RGB LED red, green, blue (one second each) and adds an `accel` shell command that reads the
 on-board LSM6DS3TR-C IMU.
 
-> **Not yet verified on hardware.** Everything builds, but the firmware has not
-> been run on a board.
+> **Verified on hardware** (XIAO nRF52840 Sense, UF2 bootloader 0.6.1): UF2 first
+> flash, MCUboot chain-load, the BLE shell and `accel` command, and OTA upgrades
+> in both directions. MCUboot's automatic revert of a bad image has not been
+> exercised.
 
 ## Requirements
 
@@ -56,17 +58,32 @@ Outputs:
 The same procedure recovers a board at any time, since the UF2 bootloader is
 left untouched.
 
-## Console (BLE)
+## Console
 
-Connect to **XIAO Sense Plus** with any Nordic UART Service terminal, e.g.
-the UART feature in nRF Toolbox or the Bluefruit Connect app, and type `help`.
+The Zephyr shell (with log output) is available over both Bluetooth and USB.
+Type `help` for the command list.
 
 ```
 bt_nus:~$ accel
 accel x=0.12 y=-0.34 z=9.79 m/s^2
 ```
 
-Log output is also sent to the USB CDC ACM serial port.
+**BLE** – connect to **XIAO Sense Plus** with any Nordic UART Service terminal,
+e.g. the UART feature in nRF Toolbox or the Bluefruit Connect app. From a
+computer, use the included terminal (Ctrl-] quits):
+
+```sh
+pip install bleak
+python tools/console.py
+```
+
+**USB** – open the board's CDC ACM serial port (`/dev/cu.usbmodem*` on macOS,
+`/dev/ttyACM*` on Linux, a COM port on Windows) in any serial terminal, such as
+the VS Code serial terminal or `screen`.
+
+The firmware does not support pairing. If the board was previously bonded to
+your phone or computer under other firmware, remove ("forget") that old device
+entry first, or the connection is refused.
 
 ## OTA upgrade (BLE)
 
