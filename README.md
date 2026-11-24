@@ -106,6 +106,16 @@ bt_nus:~$ blink pattern r-b-w
 to 26 characters. The name is kept across resets. Phones and computers cache
 names, so a board they have already seen may show its old name for a while.
 
+### Restart and factory reset
+
+`reboot` restarts the board; every setting is kept.
+
+`factory_reset confirm` erases everything the board has stored – name, blink,
+IMU and HID settings, the pairing switch and all paired devices – and restarts
+it with the defaults. The firmware itself is not touched. Phones and computers
+that were paired still hold their half of the pairing and cannot reconnect
+until the board is removed ("forgotten") in their Bluetooth settings.
+
 ### IMU
 
 `imu` shows the accelerometer and gyroscope configuration and `imu read` takes
@@ -272,8 +282,8 @@ It connects to the first board it finds; pass a name
 (`python tools/console.py "My Board"`) to pick one.
 
 **Web app** – a browser page with the console, fold-away controls for every
-command above (name, blink, IMU, paired devices, sleep, mouse and keyboard,
-bootloader) and firmware upgrade, all over one Bluetooth connection. The
+command above (name, restart, factory reset, blink, IMU, paired devices,
+sleep, mouse and keyboard, bootloader) and firmware upgrade, all over one Bluetooth connection. The
 controls run the same shell commands you would type, visibly in the console.
 It needs Chrome or Edge on a computer or Android; Safari, Firefox and iOS have
 no Web Bluetooth.
@@ -366,7 +376,7 @@ Defined in `dts/mcuboot_partitions.dtsi`, shared by the app and MCUboot.
   off after setting up, or add a passkey or out-of-band step if the product
   can support one.
 - **USB console is open** – anyone with physical access gets the shell,
-  including `bonds` and `bootloader`.
+  including `bonds`, `factory_reset` and `bootloader`.
 
 ## License
 

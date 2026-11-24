@@ -109,6 +109,21 @@ export function initControls({ shell, onName }) {
 		await loadName();
 	}, "Renamed. Other devices may show the old name for a while."));
 
+	$("reboot").addEventListener("click", () => {
+		if (confirm("Restart the board?\n\nYou are disconnected; settings are kept.")) {
+			act("device", () => shell.fire("reboot"));
+		}
+	});
+
+	$("factory-reset").addEventListener("click", () => {
+		if (confirm("Reset the board to factory defaults?\n\nThis erases its name, blink, " +
+			    "IMU and HID settings and all paired devices, then restarts it. To connect " +
+			    "again, first remove (forget) the board in the Bluetooth settings of this " +
+			    "and every other paired device.")) {
+			act("device", () => shell.fire("factory_reset confirm"));
+		}
+	});
+
 	$("bootloader").addEventListener("click", () => {
 		if (confirm("Restart into the USB bootloader?\n\nThe board disconnects and stays " +
 			    "in bootloader mode until firmware is copied to its USB drive or it is reset.")) {

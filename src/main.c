@@ -14,6 +14,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/reboot.h>
 #include <hal/nrf_power.h>
 #include <app_version.h>
@@ -284,6 +285,57 @@ static int cmd_bootloader(const struct shell *sh, size_t argc, char **argv)
 SHELL_CMD_REGISTER(bootloader, NULL,
 		   "Reset into the UF2 bootloader (USB drive) for flashing over USB",
 		   cmd_bootloader);
+
+static int cmd_reboot(const struct shell *sh, size_t argc, char **argv)
+{
+	shell_print(sh, "Restarting...");
+	/* Let the message reach the terminal before the link drops. */
+	k_msleep(500);
+
+	sys_reboot(SYS_REBOOT_COLD);
+
+	return 0;
+}
+
+SHELL_CMD_REGISTER(reboot, NULL, "Restart the board", cmd_reboot);
+
+/*
+ * Everything the board remembers (name, blink, IMU and HID settings, pairing
+ * switch and the bonds themselves) lives in the storage partition, so erasing
+ * it and restarting brings back every default at once.
+ */
+static int cmd_factory_reset(const struct shell *sh, size_t argc, char **argv)
+{
+	const struct flash_area *storage;
+	int err;
+
+	if (argc != 2 || strcmp(argv[1], "confirm") != 0) {
+		shell_error(sh, "This erases all settings and paired devices. "
+				"To go ahead: factory_reset confirm");
+		return -EINVAL;
+	}
+
+	shell_print(sh, "Erasing all settings and paired devices, then restarting...");
+	k_msleep(500);
+
+	err = flash_area_open(PARTITION_ID(storage_partition), &storage);
+	if (!err) {
+		err = flash_area_flatten(storage, 0, storage->fa_size);
+		flash_area_close(storage);
+	}
+	if (err) {
+		shell_error(sh, "Could not erase the settings (err %d)", err);
+		return err;
+	}
+
+	sys_reboot(SYS_REBOOT_COLD);
+
+	return 0;
+}
+
+SHELL_CMD_ARG_REGISTER(factory_reset, NULL,
+		       "confirm  Erase all settings and paired devices, then restart",
+		       cmd_factory_reset, 1, 1);
 
 int main(void)
 {
