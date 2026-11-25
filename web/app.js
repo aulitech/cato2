@@ -274,7 +274,7 @@ function useDevice(device) {
 
 async function connect() {
 	const device = await navigator.bluetooth.requestDevice({
-		filters: [{ services: [NUS_SERVICE] }, { namePrefix: "XIAO" }],
+		filters: [{ services: [NUS_SERVICE] }, { namePrefix: "Cato" }, { namePrefix: "XIAO" }],
 		optionalServices: [NUS_SERVICE, SMP_SERVICE, ORIENTATION_SERVICE],
 	});
 

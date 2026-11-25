@@ -151,7 +151,13 @@ static struct shell_transport ble_transport = {
 	.api = &transport_api,
 };
 
+/* The prompt is replaced by the board's name once that is known. */
 SHELL_DEFINE(shell_ble, "bt_nus:~$ ", &ble_transport, 256, 0, SHELL_FLAG_OLF_CRLF);
+
+int ble_shell_set_prompt(const char *prompt)
+{
+	return shell_prompt_change(&shell_ble, prompt);
+}
 
 int ble_shell_init(void)
 {

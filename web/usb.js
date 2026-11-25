@@ -104,7 +104,8 @@ const CLEAR_LINE = "\x15";
 
 /** Works out what is on a serial port from what it sent back. */
 export function classifySerial(text, vendorId) {
-	if (/uart:~\$/.test(text)) {
+	// The shell's prompt: the board's name, or "uart" on earlier firmware.
+	if (/:~\$/.test(text)) {
 		return KIND_CURRENT;
 	}
 	if (text.trim() === "" && vendorId === SEEED_VID) {

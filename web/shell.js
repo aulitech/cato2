@@ -8,7 +8,8 @@
 
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 const ERROR_COLOUR = "\x1b[1;31m";
-const PROMPT = /[\w.-]+:~\$ $/;
+// The prompt is the board's name, which may hold any characters, then ":~$ ".
+const PROMPT = /:~\$ $/;
 const LOG_LINE = /^\[\d\d:\d\d:\d\d\.\d{3},\d{3}\] <\w+> /;
 const CLEAR_LINE = "\x15";
 

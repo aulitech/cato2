@@ -85,10 +85,10 @@ MyCato does both steps with the published build: see
 ## Console
 
 The Zephyr shell (with log output) is available over both Bluetooth and USB.
-Type `help` for the command list.
+Type `help` for the command list. The prompt is the board's name.
 
 ```
-bt_nus:~$ accel
+Cato_1A2B:~$ accel
 accel x=0.12 y=-0.34 z=9.79 m/s^2
 ```
 
@@ -101,10 +101,10 @@ The `blink` command shows or changes how the RGB LED blinks. Changes take
 effect immediately and are kept across resets and OTA upgrades.
 
 ```
-bt_nus:~$ blink
+Cato_1A2B:~$ blink
 rate 1000 ms, pattern rgb
-bt_nus:~$ blink rate 250
-bt_nus:~$ blink pattern r-b-w
+Cato_1A2B:~$ blink rate 250
+Cato_1A2B:~$ blink pattern r-b-w
 ```
 
 - `blink rate <ms>` – time per pattern step, 20 to 60000 ms
@@ -114,7 +114,9 @@ bt_nus:~$ blink pattern r-b-w
 ### Name
 
 `name` shows the board's Bluetooth name and `name <new name>` changes it, up
-to 26 characters. The name is kept across resets. Phones and computers cache
+to 26 characters. Until it is given one, a board is called `Cato_` and the
+last four digits of its serial number, such as `Cato_1A2B`. The name is also
+the shell's prompt. The name is kept across resets. Phones and computers cache
 names, so a board they have already seen may show its old name for a while.
 
 ### Restart, version and factory reset
@@ -125,8 +127,8 @@ names, so a board they have already seen may show its old name for a while.
 made with:
 
 ```
-bt_nus:~$ version
-firmware 0.2.1
+Cato_1A2B:~$ version
+firmware 0.2.2
 ```
 
 `factory_reset confirm` erases everything the board has stored – name, blink,
@@ -142,13 +144,13 @@ one reading of acceleration, rotation rate and temperature (`accel` reads the
 accelerometer alone).
 
 ```
-bt_nus:~$ imu
+Cato_1A2B:~$ imu
 accel  odr 104 Hz, range +-2 g, high-performance mode
 gyro   odr 104 Hz, range +-250 dps, high-performance mode
 saved  no (defaults at boot)
-bt_nus:~$ imu accel range 8
-bt_nus:~$ imu gyro odr 0
-bt_nus:~$ imu save
+Cato_1A2B:~$ imu accel range 8
+Cato_1A2B:~$ imu gyro odr 0
+Cato_1A2B:~$ imu save
 ```
 
 | Command | Values |
@@ -177,7 +179,7 @@ you to confirm. Up to five paired devices (bonds) are remembered across resets
 and upgrades. The USB console needs no pairing.
 
 ```
-bt_nus:~$ bonds
+Cato_1A2B:~$ bonds
 1  80:A9:97:09:B1:31 (public)  (connected)
 1 of 5 bonds used, pairing on
 ```
@@ -216,16 +218,16 @@ two more devices can still connect for the console and OTA.
 resets:
 
 ```
-bt_nus:~$ hid enable mouse
-bt_nus:~$ hid enable orientation
-bt_nus:~$ hid
+Cato_1A2B:~$ hid enable mouse
+Cato_1A2B:~$ hid enable orientation
+Cato_1A2B:~$ hid
 enabled: mouse orientation
 hosts 1, listening to: mouse keyboard accel gyro orientation
 sensor rate 50 Hz
 keyboard LEDs 0x00
 air mouse off, speed 20 20, accel 60 deg/s, dead zone 2 deg/s, axes auto, forward +y
 link: interval 15.00 ms, 2M, MTU 498
-bt_nus:~$ hid mouse move 50 -20
+Cato_1A2B:~$ hid mouse move 50 -20
 ```
 
 - `hid enable <report|all>`, `hid disable <report|all>` – `mouse`, `keyboard`,
@@ -340,7 +342,7 @@ After a motion wake-up the log shows `Woken from sleep by motion`.
 
 ### Connecting
 
-**BLE** – connect to **XIAO Sense Plus** with any Nordic UART Service terminal,
+**BLE** – connect to the board (**Cato_xxxx** until renamed) with any Nordic UART Service terminal,
 e.g. the UART feature in nRF Toolbox or the Bluefruit Connect app. From a
 computer, use the included terminal (Ctrl-] quits):
 
