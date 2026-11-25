@@ -117,9 +117,17 @@ bt_nus:~$ blink pattern r-b-w
 to 26 characters. The name is kept across resets. Phones and computers cache
 names, so a board they have already seen may show its old name for a while.
 
-### Restart and factory reset
+### Restart, version and factory reset
 
 `reboot` restarts the board; every setting is kept.
+
+`version` shows the firmware version, from the `VERSION` file the build was
+made with:
+
+```
+bt_nus:~$ version
+firmware 0.2.1
+```
 
 `factory_reset confirm` erases everything the board has stored – name, blink,
 IMU and HID settings, the pairing switch and all paired devices – and restarts
