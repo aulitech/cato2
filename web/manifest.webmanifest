@@ -1,7 +1,7 @@
 {
-	"name": "XIAO Sense Plus",
-	"short_name": "XIAO Sense",
-	"description": "Bluetooth console and firmware upgrade for the XIAO nRF52840 Sense Plus",
+	"name": "MyCato",
+	"short_name": "MyCato",
+	"description": "Set up, control and upgrade a Cato over Bluetooth or USB",
 	"start_url": ".",
 	"scope": ".",
 	"display": "standalone",

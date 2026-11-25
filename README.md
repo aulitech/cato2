@@ -329,7 +329,7 @@ python tools/console.py
 It connects to the first board it finds; pass a name
 (`python tools/console.py "My Board"`) to pick one.
 
-**Web app** – a browser page with the console, fold-away controls for every
+**Web app (MyCato)** – a browser page with the console, fold-away controls for every
 command above (name, restart, factory reset, blink, IMU, paired devices,
 sleep, mouse and keyboard, bootloader), a live 3D view of the board's
 orientation and firmware upgrade, all over one Bluetooth connection. The
@@ -345,6 +345,10 @@ focused, the arrow keys). The console is a drawer: the buttons in its heading
 dock it left, at the bottom or right, open it in a window of its own, or hide
 it; **Console** at the top of the page brings it back, and the bar between
 drawer and cards resizes it. The arrangement is remembered in the browser.
+
+The menu at the right end of the top row opens **Settings** (light or dark
+appearance, console text size, resetting the arrangement, forgetting USB
+drives), **Help** and **About**.
 
 To run it locally instead:
 

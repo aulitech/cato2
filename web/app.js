@@ -9,6 +9,7 @@ import { ShellRunner } from "./shell.js";
 import * as smp from "./smp.js";
 import * as usb from "./usb.js";
 import { initLayout } from "./layout.js";
+import { initMenu } from "./menu.js";
 
 const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // browser -> board
@@ -108,6 +109,33 @@ term.onData(sendInput);
 
 // Cards and the console drawer; told of all output for the popped-out console.
 const layout = initLayout({ term, sendInput });
+
+// Settings, Help and About, behind the menu in the top row.
+initMenu({
+	term,
+	refit: () => fit.fit(),
+	about: () => {
+		const info = state.latest && state.latest.info;
+		const running = state.smpChar ? state.images.find((image) => image.slot === 0) : null;
+		const built = info ? new Date(info.built) : null;
+		const can = (yes) => (yes ? "yes" : "not in this browser");
+
+		return [
+			["MyCato", `version ${self.MYCATO_VERSION}`],
+			["Board", state.smpChar
+				? `${state.device.name || "Unnamed"}, firmware ${running ? running.version : "unknown"}`
+				: "Not connected"],
+			["Latest firmware", info
+				? `${info.version} (${String(info.commit).slice(0, 7)})` +
+				  (built && !Number.isNaN(built.getTime())
+					? `, built ${built.toLocaleDateString(undefined, { dateStyle: "medium" })}`
+					: "")
+				: "Not known"],
+			["Bluetooth", can(BLUETOOTH)],
+			["Upgrade over USB", can(usb.DRIVE_SUPPORTED)],
+		];
+	},
+});
 
 function consoleWrite(data) {
 	term.write(data);
