@@ -7,7 +7,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Console – XIAO Sense Plus</title>
+<title>Console – MyCato</title>
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -69,6 +69,14 @@ button {
 		theme: { background: "#11151a", foreground: "#d7dde5", cursor: "#d7dde5" },
 	});
 	const fit = new FitAddon.FitAddon();
+
+	// The text size chosen in the app's Settings.
+	try {
+		term.options.fontSize = JSON.parse(localStorage.getItem("cato-settings")).fontSize || 13;
+	} catch {
+		// The usual size, then.
+	}
+
 	const tell = (message) => {
 		if (app && !app.closed) {
 			app.postMessage(message, location.origin);

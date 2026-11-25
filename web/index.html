@@ -4,14 +4,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>XIAO Sense Plus</title>
-<meta name="description" content="Bluetooth console, controls and firmware upgrade for the XIAO nRF52840 Sense Plus">
+<title>MyCato</title>
+<meta name="description" content="MyCato: set up, control and upgrade a Cato over Bluetooth or USB">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#171b21" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="vendor/xterm.css">
+<script>
+// The theme chosen in Settings, before anything is drawn.
+try {
+	const theme = (JSON.parse(localStorage.getItem("cato-settings")) || {}).theme;
+
+	if (theme === "light" || theme === "dark") {
+		document.documentElement.dataset.theme = theme;
+	}
+} catch {
+	// The system's theme, then.
+}
+</script>
 <style>
 :root {
 	color-scheme: light dark;
@@ -29,8 +41,9 @@
 	--terminal: #11151a;
 }
 
+/* Dark: when the system is, unless Settings says light; or when Settings says dark. */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme="light"]) {
 		--bg: #0d1014;
 		--panel: #171b21;
 		--inset: #0d1014;
@@ -44,6 +57,21 @@
 		--error: #ff7b72;
 	}
 }
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--bg: #0d1014;
+	--panel: #171b21;
+	--inset: #0d1014;
+	--border: #2c333c;
+	--text: #e3e7ec;
+	--muted: #94a0ae;
+	--accent: #4c9bf0;
+	--accent-text: #0d1014;
+	--ok: #4ac26b;
+	--warn: #d4a72c;
+	--error: #ff7b72;
+}
+:root[data-theme="light"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
 
@@ -427,6 +455,64 @@ progress { width: 100%; height: 8px; }
 	color: var(--error);
 }
 
+/* The menu and the pages it opens */
+header { position: relative; }
+#menu-button { display: inline-flex; padding: 6px; }
+#menu-button svg { width: 18px; height: 18px; }
+#menu {
+	position: absolute;
+	top: calc(100% - 4px);
+	right: 16px;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	min-width: 160px;
+	padding: 4px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--panel);
+	box-shadow: 0 6px 24px rgb(0 0 0 / 0.25);
+}
+#menu[hidden] { display: none; }
+#menu button { border: none; background: none; text-align: left; }
+#menu button:hover, #menu button:focus-visible { background: var(--inset); outline: none; }
+
+dialog.page {
+	width: min(560px, calc(100vw - 32px));
+	max-height: calc(100dvh - 48px);
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--panel);
+	color: var(--text);
+}
+dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
+.page-head {
+	position: sticky;
+	top: 0;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--border);
+	background: var(--panel);
+}
+.page-head h2 { font-size: 15px; }
+.page-close { display: inline-flex; padding: 3px; border-color: transparent; background: none; color: var(--muted); }
+.page-close svg { width: 16px; height: 16px; }
+.page-body { display: flex; flex-direction: column; gap: 14px; padding: 16px; font-size: 13px; }
+.page-body h3 { margin: 0 0 4px; font-size: 13px; }
+.page-body p, .page-body ul { margin: 0; }
+.page-body ul { padding-left: 18px; }
+.page-body li { margin-bottom: 4px; }
+.page-body a { color: var(--accent); }
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.setting > div { min-width: 0; }
+.setting button, .setting select { flex: none; }
+#about-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0; }
+#about-facts dt { color: var(--muted); }
+#about-facts dd { margin: 0; }
+
 /* Narrow windows have no room at the sides: the drawer goes underneath. */
 @media (max-width: 900px) {
 	#workspace, body[data-dock] #workspace { flex-direction: column; }
@@ -444,11 +530,19 @@ progress { width: 100%; height: 8px; }
 <body>
 
 <header>
-	<h1>XIAO Sense Plus</h1>
+	<h1>MyCato</h1>
 	<span id="device-name"></span>
 	<span id="status" data-state="disconnected">Disconnected</span>
 	<button id="console-toggle" aria-pressed="true">Console</button>
 	<button id="connect" class="primary">Connect</button>
+	<button id="menu-button" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">
+		<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 5h12M3 9h12M3 13h12"/></svg>
+	</button>
+	<div id="menu" role="menu" hidden>
+		<button role="menuitem" data-page="settings">Settings</button>
+		<button role="menuitem" data-page="help">Help</button>
+		<button role="menuitem" data-page="about">About</button>
+	</div>
 </header>
 
 <p id="unsupported" hidden>
@@ -458,7 +552,7 @@ progress { width: 100%; height: 8px; }
 </p>
 
 <div id="workspace">
-	<main id="controls" data-folded="orientation">
+	<main id="controls">
 		<section class="card" data-card="device">
 			<div class="card-head">
 				<h2>Board</h2>
@@ -718,7 +812,7 @@ progress { width: 100%; height: 8px; }
 			</div>
 		</section>
 
-		<section class="card" data-card="orientation">
+		<section class="card" data-card="orientation" data-independent>
 			<div class="card-head">
 				<h2>Orientation</h2>
 				<span id="orientation-rate" class="note"></span>
@@ -863,6 +957,101 @@ progress { width: 100%; height: 8px; }
 	</section>
 </div>
 
+<dialog id="page-settings" class="page" aria-labelledby="settings-title">
+	<div class="page-head"><h2 id="settings-title">Settings</h2><button class="page-close" title="Close" aria-label="Close"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div>
+	<div class="page-body">
+		<p class="note">These are the app's own settings, kept in this browser. The board's settings are on the cards.</p>
+		<div class="setting">
+			<label for="setting-theme">Appearance</label>
+			<select id="setting-theme">
+				<option value="system">Same as the system</option>
+				<option value="light">Light</option>
+				<option value="dark">Dark</option>
+			</select>
+		</div>
+		<div class="setting">
+			<label for="setting-font-size">Console text size</label>
+			<select id="setting-font-size">
+				<option value="11">Small</option>
+				<option value="13">Medium</option>
+				<option value="15">Large</option>
+				<option value="18">Extra large</option>
+			</select>
+		</div>
+		<div class="setting">
+			<div>
+				Card and console arrangement
+				<p class="note">Puts the cards and the console back where they started. Reloads the page, which disconnects the board.</p>
+			</div>
+			<button id="setting-reset-layout">Reset</button>
+		</div>
+		<div class="setting">
+			<div>
+				Remembered USB drives
+				<p class="note">The board drives chosen for upgrades over USB.</p>
+			</div>
+			<button id="setting-forget-drives">Forget</button>
+		</div>
+		<p id="settings-note" class="note"></p>
+	</div>
+</dialog>
+
+<dialog id="page-help" class="page" aria-labelledby="help-title">
+	<div class="page-head"><h2 id="help-title">Help</h2><button class="page-close" title="Close" aria-label="Close"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div>
+	<div class="page-body">
+		<div>
+			<h3>Connecting</h3>
+			<p>Press <strong>Connect</strong> and pick the board from the browser's list. The first time, the computer asks to pair with it. This needs Chrome or Edge, on a computer or Android.</p>
+			<p>If the connection drops, because the board restarted, slept or went out of range, the app reconnects by itself as soon as the board is back. Press <strong>Stop</strong> to give up, or <strong>Disconnect</strong> to end a connection for good.</p>
+			<p>After the page is reloaded, press <strong>Connect</strong> again. Some browsers let the app find the board it last used, and it then reconnects without being asked.</p>
+		</div>
+		<div>
+			<h3>If the board is not listed, or will not pair</h3>
+			<ul>
+				<li>Check that it has power and is not asleep: press its reset button once.</li>
+				<li>A board accepts new devices only while pairing is allowed. On a device already paired with it, switch on <strong>Allow new devices to pair</strong> under Paired devices.</li>
+				<li>If pairing keeps failing, or the board was reset to factory defaults, remove ("forget") the board in the computer's Bluetooth settings and connect again.</li>
+			</ul>
+		</div>
+		<div>
+			<h3>Cards</h3>
+			<p>Each card controls one part of the board. Click a heading to open a card, which closes the one that was open (the Orientation card stays as it is); drag the dots at the left of the heading to move it. Changes made on a card are sent to the board as the same commands you could type in the console.</p>
+		</div>
+		<div>
+			<h3>Console</h3>
+			<p>The board's command line. The buttons in its heading dock it left, at the bottom or right, open it in its own window, or hide it; <strong>Console</strong> in the top row brings it back. Type <code>help</code> for the list of commands.</p>
+		</div>
+		<div>
+			<h3>Upgrading the firmware</h3>
+			<p>The Firmware upgrade card says whether the board is up to date. Settings and paired devices are kept.</p>
+			<ul>
+				<li><strong>Upgrade over Bluetooth</strong> works on a connected board.</li>
+				<li><strong>Upgrade over USB</strong> works on any board plugged into this computer, including a legacy Cato. The first time, the browser asks you to pick the board, and then its drive, named XIAO-SENSE or AULI-UPDAT. After that one press does it all.</li>
+				<li>If the board does not switch to its drive by itself, double-tap its reset button.</li>
+				<li>A legacy Cato starts afresh after its upgrade: forget it in the computer's Bluetooth settings and pair again.</li>
+			</ul>
+		</div>
+		<div>
+			<h3>Settings</h3>
+			<p>The menu at the end of the top row has the app's own settings: light or dark appearance, the console's text size, putting the cards and console back where they started, and forgetting the USB drives chosen for upgrades.</p>
+		</div>
+		<p>More in the <a href="https://github.com/aulitech/cato2#readme" target="_blank" rel="noopener">project's documentation</a>.</p>
+	</div>
+</dialog>
+
+<dialog id="page-about" class="page" aria-labelledby="about-title">
+	<div class="page-head"><h2 id="about-title">About MyCato</h2><button class="page-close" title="Close" aria-label="Close"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div>
+	<div class="page-body">
+		<p>MyCato sets up, controls and upgrades a Cato: a Seeed Studio XIAO nRF52840 Sense Plus running the Cato firmware. It talks to the board directly from this browser, over Bluetooth or USB.</p>
+		<dl id="about-facts"></dl>
+		<p>
+			<a href="https://github.com/aulitech/cato2" target="_blank" rel="noopener">Source code</a>,
+			under the MIT licence.
+		</p>
+	</div>
+</dialog>
+
+<script src="version.js"></script>
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>
 <script type="module" src="app.js"></script>

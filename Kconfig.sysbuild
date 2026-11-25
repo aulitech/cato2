@@ -4,7 +4,7 @@
 # It is taken from the MCUBOOT_SIGNING_KEY environment variable (a path) or,
 # when that is not set, from its usual place in the home directory. With
 # neither, the build falls back to MCUboot's public development key.
-PROJECT_KEY := $(shell,ls ~/.mcuboot/xiao-nrf52840-sense-plus.pem 2>/dev/null)
+PROJECT_KEY := $(shell,ls ~/.mcuboot/cato2.pem 2>/dev/null)
 
 config BOOT_SIGNATURE_KEY_FILE
 	default "$(MCUBOOT_SIGNING_KEY)" if "$(MCUBOOT_SIGNING_KEY)" != ""

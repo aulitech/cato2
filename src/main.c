@@ -325,6 +325,15 @@ static int cmd_reboot(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_CMD_REGISTER(reboot, NULL, "Restart the board", cmd_reboot);
 
+static int cmd_version(const struct shell *sh, size_t argc, char **argv)
+{
+	shell_print(sh, "firmware %s", APP_VERSION_STRING);
+
+	return 0;
+}
+
+SHELL_CMD_REGISTER(version, NULL, "Show the firmware version", cmd_version);
+
 /*
  * Everything the board remembers (name, blink, IMU and HID settings, pairing
  * switch and the bonds themselves) lives in the storage partition, so erasing

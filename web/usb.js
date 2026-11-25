@@ -269,6 +269,11 @@ export async function rememberedDrives() {
 	}
 }
 
+/** Forgets every remembered drive. */
+export function forgetDrives() {
+	return withStore("readwrite", (store) => store.clear()).catch(() => {});
+}
+
 /** Whether a UF2 file is well formed: whole blocks, each with the magic number. */
 export function isUf2(bytes) {
 	if (bytes.length === 0 || bytes.length % UF2_BLOCK !== 0) {

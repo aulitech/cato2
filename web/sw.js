@@ -4,7 +4,10 @@
 // to the network first, so an edited or redeployed app shows up on the next
 // load; the cached copy is used only when the server cannot be reached.
 
-const CACHE = "xiao-sense-plus-v15";
+importScripts("version.js");
+
+// A new version of the app gets a new cache, and the old one is dropped.
+const CACHE = `mycato-${self.MYCATO_VERSION}`;
 
 const FILES = [
 	"./",
@@ -13,10 +16,12 @@ const FILES = [
 	"console.html",
 	"controls.js",
 	"layout.js",
+	"menu.js",
 	"orientation.js",
 	"shell.js",
 	"smp.js",
 	"usb.js",
+	"version.js",
 	"manifest.webmanifest",
 	"vendor/xterm.js",
 	"vendor/xterm.css",
