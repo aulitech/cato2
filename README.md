@@ -339,6 +339,13 @@ no Web Bluetooth.
 
 Open <https://auli-ng.netlify.app>, click **Connect** and pick the board.
 
+The cards fill the page. Each folds away with a click on its heading, and is
+moved by dragging the grip at the left of the heading (or, with the grip
+focused, the arrow keys). The console is a drawer: the buttons in its heading
+dock it left, at the bottom or right, open it in a window of its own, or hide
+it; **Console** at the top of the page brings it back, and the bar between
+drawer and cards resizes it. The arrangement is remembered in the browser.
+
 To run it locally instead:
 
 ```sh
@@ -364,20 +371,43 @@ the VS Code serial terminal or `screen`.
 
 The web app's **Firmware upgrade** card says whether the board already has
 the most recent build of `main` (see [Published builds](#published-builds))
-and installs it with one button: **Upgrade over Bluetooth**. **Upgrade over
-USB** walks through the same upgrade with the downloaded `usb-upgrade.uf2`,
-for a new board or one that does not accept the Bluetooth upgrade.
+and installs it with one button: **Upgrade over Bluetooth**, or **Upgrade
+over USB** for a new board or one that does not accept the Bluetooth upgrade.
+
+### Upgrading over USB
+
+**Upgrade over USB** does the whole upgrade from the page: it restarts the
+board into the bootloader, where it is a drive named `XIAO-SENSE` (or
+`AULI-UPDAT` on some legacy Catos), downloads
+`usb-upgrade.uf2`, and writes it onto that drive. The board installs the file
+and restarts.
+
+The browser makes the user grant access to each thing once, so the first
+upgrade has two choices to make; later ones need none, or at most a
+confirmation that the page may write to the drive:
+
+- **the board**, to restart it. A board connected over Bluetooth is restarted
+  over that connection. Otherwise press **Board with this firmware** (reached
+  through its USB console) or **Legacy Cato**, and pick it from the browser's
+  list. If the board does not switch, the page says so and waits: double-tap
+  the board's reset button, which does the same with no browser involved.
+- **the drive**, with **Choose the board's drive**. The page checks that
+  the folder chosen is a board's drive (it holds `INFO_UF2.TXT`) before it
+  writes anything. On macOS the system also asks once whether the browser may
+  use removable volumes.
+
+This needs Chrome or Edge on a computer. In other browsers, **Do it by hand**
+gives the file to download and copy onto the drive yourself.
 
 ### Upgrading a legacy Cato
 
 A Cato running the earlier firmware ([z_cato](https://github.com/aulitech/z_cato))
-is upgraded over USB from the same card. Plug it in, open **Upgrade over
-USB**, and press **Legacy Cato**: the page finds it as a USB HID device
-(`1915:52DD`), sends it its own `reboot uf2` command, and it comes back as the
-`XIAO-SENSE` drive, ready for `usb-upgrade.uf2`. Once the browser has been
-given access to a legacy Cato, the card notices it whenever it is plugged in.
-**Board with this firmware** does the same for a board already on this
-firmware, through its USB console. Both need Chrome or Edge on a computer.
+is upgraded the same way. Plug it in, press **Upgrade over USB**, then
+**Legacy Cato**: the page finds it as a USB HID device (`1915:52DD`) and sends
+it its own `reboot uf2` command, which brings it back as the `XIAO-SENSE` or
+`AULI-UPDAT` drive. Once the browser has been given access to a legacy Cato, the card
+notices it whenever it is plugged in, and **Upgrade over USB** restarts it
+without asking.
 
 On its first start after such an upgrade, this firmware finds the earlier
 firmware's data where its settings belong, with none of its own in it, and

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
-// Finds a board plugged in over USB and restarts it into the UF2 bootloader
-// ("USB mode"), where it appears as the XIAO-SENSE drive that firmware is
-// copied to. Works without Bluetooth, and for a board that has never run this
-// firmware.
+// Finds a board plugged in over USB, restarts it into the UF2 bootloader
+// ("USB mode"), where it appears as a drive (XIAO-SENSE, or AULI-UPDAT on some
+// legacy Catos), and writes firmware onto that drive. Works without Bluetooth, and for a board that has never
+// run this firmware.
 //
 //   legacy Cato     (the z_cato firmware) is a USB HID device. It takes text
 //                   commands in feature reports, one of which restarts it
@@ -155,14 +155,7 @@ async function probe(port) {
 	}
 }
 
-/**
- * Asks the user to pick the board's serial port, works out what it is, and
- * restarts it into USB mode if it is not there already. Resolves with the
- * kind found; rejects with a NotFoundError if nothing was picked.
- */
-export async function restartSerialIntoUsbMode() {
-	const port = await navigator.serial.requestPort({ filters: SERIAL_FILTERS });
-
+async function restartPort(port) {
 	await port.open({ baudRate: 115200 });
 	try {
 		return await probe(port);
@@ -170,4 +163,227 @@ export async function restartSerialIntoUsbMode() {
 		// Gone already if the board reset.
 		await port.close().catch(() => {});
 	}
+}
+
+/**
+ * Asks the user to pick the board's serial port, works out what it is, and
+ * restarts it into USB mode if it is not there already. Resolves with the
+ * kind found; rejects with a NotFoundError if nothing was picked.
+ */
+export async function restartSerialIntoUsbMode() {
+	return restartPort(await navigator.serial.requestPort({ filters: SERIAL_FILTERS }));
+}
+
+/**
+ * Restarts a board into USB mode without asking anything, which works for one
+ * the page has been given access to before. Resolves with the kind found, or
+ * null if no such board is plugged in.
+ */
+export async function restartKnownIntoUsbMode() {
+	if ((await knownLegacyDevices().catch(() => [])).length) {
+		await restartLegacyIntoUsbMode();
+		return KIND_LEGACY;
+	}
+	if (!SERIAL_SUPPORTED) {
+		return null;
+	}
+
+	const ports = (await navigator.serial.getPorts()).filter((port) =>
+		SERIAL_FILTERS.some((filter) => filter.usbVendorId === port.getInfo().usbVendorId));
+
+	for (const port of ports) {
+		try {
+			const kind = await restartPort(port);
+
+			if (kind !== KIND_UNKNOWN) {
+				return kind;
+			}
+		} catch {
+			// In use elsewhere, or unplugged: try the next.
+		}
+	}
+	return null;
+}
+
+// -------------------------------------------------------------- the drive ---
+//
+// In USB mode the board is a drive, and a UF2 file written to it is installed.
+// The File System Access API lets the page do that writing once the user has
+// pointed it at the drive. Drives are remembered by name, so that later
+// upgrades need at most a confirmation.
+
+/** What the drive is called, for telling the user what to look for. */
+export const DRIVE_NAMES = "XIAO-SENSE or AULI-UPDAT";
+
+export const DRIVE_SUPPORTED = typeof window !== "undefined" && "showDirectoryPicker" in window;
+
+const DRIVE_MARKER = "INFO_UF2.TXT"; // every UF2 bootloader's drive has it
+const UF2_BLOCK = 512;
+const UF2_MAGIC = 0x0a324655; // "UF2\n"
+const WRITE_CHUNK = 64 * UF2_BLOCK;
+const POLL_MS = 500;
+
+const DB_NAME = "cato-usb";
+const DB_STORE = "handles";
+
+function withStore(mode, action) {
+	return new Promise((resolve, reject) => {
+		const open = indexedDB.open(DB_NAME, 1);
+
+		open.onupgradeneeded = () => open.result.createObjectStore(DB_STORE);
+		open.onerror = () => reject(open.error);
+		open.onsuccess = () => {
+			const db = open.result;
+			const transaction = db.transaction(DB_STORE, mode);
+			let request;
+
+			try {
+				request = action(transaction.objectStore(DB_STORE));
+			} catch (err) {
+				db.close();
+				reject(err);
+				return;
+			}
+
+			transaction.oncomplete = () => {
+				db.close();
+				resolve(request.result);
+			};
+			transaction.onerror = () => {
+				db.close();
+				reject(transaction.error);
+			};
+		};
+	});
+}
+
+/** The drives chosen on earlier visits. */
+export async function rememberedDrives() {
+	if (!DRIVE_SUPPORTED) {
+		return [];
+	}
+	try {
+		return (await withStore("readonly", (store) => store.getAll())) || [];
+	} catch {
+		return [];
+	}
+}
+
+/** Whether a UF2 file is well formed: whole blocks, each with the magic number. */
+export function isUf2(bytes) {
+	if (bytes.length === 0 || bytes.length % UF2_BLOCK !== 0) {
+		return false;
+	}
+
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+	for (let offset = 0; offset < bytes.length; offset += UF2_BLOCK) {
+		if (view.getUint32(offset, true) !== UF2_MAGIC) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/** Whether the folder is a board's drive, mounted right now. */
+export async function isBootloaderDrive(drive) {
+	try {
+		const file = await (await drive.getFileHandle(DRIVE_MARKER)).getFile();
+
+		return /UF2/i.test(await file.text());
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Whether the page may write to a remembered drive. With ask, the browser
+ * asks the user if it has to, which only works straight after a click.
+ */
+export async function mayWriteDrive(drive, ask = false) {
+	const options = { mode: "readwrite" };
+
+	try {
+		if ((await drive.queryPermission(options)) === "granted") {
+			return true;
+		}
+		return ask && (await drive.requestPermission(options)) === "granted";
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Asks the user to choose the board's drive and remembers it. Rejects with an
+ * AbortError if nothing was chosen and a NotFoundError if what was chosen is
+ * not a board's drive.
+ */
+export async function chooseDrive() {
+	const drive = await window.showDirectoryPicker({ id: "cato-drive", mode: "readwrite" });
+
+	if (!(await isBootloaderDrive(drive))) {
+		throw new DOMException("Not the board's drive", "NotFoundError");
+	}
+	await withStore("readwrite", (store) => store.put(drive, drive.name)).catch(() => {});
+	return drive;
+}
+
+/** The first of the drives that is mounted right now, or null. */
+export async function mountedDrive(drives) {
+	for (const drive of drives) {
+		if (await isBootloaderDrive(drive)) {
+			return drive;
+		}
+	}
+	return null;
+}
+
+/** Waits for one of the drives to be mounted and resolves with it, or null. */
+export async function waitForDrive(drives, timeout) {
+	const deadline = Date.now() + timeout;
+
+	for (;;) {
+		const drive = await mountedDrive(drives);
+
+		if (drive || Date.now() >= deadline) {
+			return drive;
+		}
+		await sleep(POLL_MS);
+	}
+}
+
+async function waitForDriveGone(drive, timeout) {
+	const deadline = Date.now() + timeout;
+
+	while (await isBootloaderDrive(drive)) {
+		if (Date.now() >= deadline) {
+			return false;
+		}
+		await sleep(POLL_MS);
+	}
+	return true;
+}
+
+/**
+ * Writes a UF2 file onto the drive. The board installs it and restarts as
+ * soon as it has the last block, taking the drive away, so the tail end of
+ * the write commonly fails: what counts is that the drive is gone afterwards.
+ * Resolves true if the board took the file.
+ */
+export async function installOnDrive(drive, name, bytes, onProgress = () => {}) {
+	try {
+		const file = await drive.getFileHandle(name, { create: true });
+		const writable = await file.createWritable();
+
+		for (let offset = 0; offset < bytes.length; offset += WRITE_CHUNK) {
+			await writable.write(bytes.subarray(offset, offset + WRITE_CHUNK));
+			onProgress(Math.min(offset + WRITE_CHUNK, bytes.length) / bytes.length);
+		}
+		await writable.close();
+	} catch (err) {
+		if (await isBootloaderDrive(drive)) {
+			throw err;
+		}
+	}
+	return waitForDriveGone(drive, 15000);
 }

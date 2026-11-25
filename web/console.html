@@ -1,0 +1,126 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- The console popped out of the app into its own window. It has no link to
+     the board: the app's page sends what the board prints and takes what is
+     typed here (see layout.js). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Console – XIAO Sense Plus</title>
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	height: 100dvh;
+	margin: 0;
+	background: #11151a;
+	color: #d7dde5;
+	font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	border-bottom: 1px solid #2c333c;
+	background: #171b21;
+}
+h1 { margin: 0 auto 0 0; font-size: 13px; font-weight: 600; }
+button {
+	padding: 2px 8px;
+	border: 1px solid #2c333c;
+	border-radius: 6px;
+	background: #171b21;
+	color: inherit;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+#terminal { flex: 1; min-height: 0; padding: 8px; }
+#orphan { margin: 0; padding: 6px 10px; color: #ff7b72; }
+</style>
+</head>
+<body>
+<header>
+	<h1>Console</h1>
+	<button id="clear">Clear</button>
+	<button id="dock">Put back in the app</button>
+</header>
+<p id="orphan" hidden>The app's page is closed. Open the console from the app again.</p>
+<div id="terminal"></div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script>
+(() => {
+	const app = window.opener;
+	const term = new Terminal({
+		convertEol: false,
+		cursorBlink: true,
+		fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+		fontSize: 13,
+		scrollback: 5000,
+		theme: { background: "#11151a", foreground: "#d7dde5", cursor: "#d7dde5" },
+	});
+	const fit = new FitAddon.FitAddon();
+	const tell = (message) => {
+		if (app && !app.closed) {
+			app.postMessage(message, location.origin);
+		}
+	};
+	let docked = false;
+
+	term.loadAddon(fit);
+	term.open(document.getElementById("terminal"));
+	fit.fit();
+	new ResizeObserver(() => fit.fit()).observe(document.getElementById("terminal"));
+	term.focus();
+
+	if (!app) {
+		document.getElementById("orphan").hidden = false;
+		return;
+	}
+
+	term.onData((data) => tell({ type: "console-input", data }));
+
+	window.addEventListener("message", (event) => {
+		if (event.origin !== location.origin || event.source !== app) {
+			return;
+		}
+		if (event.data.type === "console-output") {
+			term.write(event.data.bytes);
+		} else if (event.data.type === "console-clear") {
+			term.clear();
+		}
+	});
+
+	document.getElementById("clear").addEventListener("click", () => {
+		term.clear();
+		term.focus();
+		tell({ type: "console-clear" });
+	});
+	document.getElementById("dock").addEventListener("click", () => {
+		docked = true;
+		tell({ type: "console-dock" });
+		window.close();
+	});
+	window.addEventListener("pagehide", () => {
+		if (!docked) {
+			tell({ type: "console-closed" });
+		}
+	});
+	setInterval(() => {
+		document.getElementById("orphan").hidden = !app.closed;
+	}, 1000);
+
+	tell({ type: "console-ready" });
+})();
+</script>
+</body>
+</html>

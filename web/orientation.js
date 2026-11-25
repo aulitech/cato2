@@ -85,7 +85,7 @@ export function initOrientation() {
 	let source = null; // the characteristic, while connected to firmware that has it
 	let supported = true;
 	let streaming = false;
-	let wanted = false;
+	let wanted = card.classList.contains("open");
 	let latest = null;
 	let zeroYaw = null;
 	let frame = 0;

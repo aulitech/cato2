@@ -53,7 +53,7 @@ export function initControls({ shell, onName }) {
 
 	function setEnabled(enabled) {
 		for (const card of cards) {
-			for (const el of card.querySelectorAll("button, input, select")) {
+			for (const el of card.querySelectorAll("button:not(.card-grip), input, select")) {
 				el.disabled = !enabled;
 			}
 		}

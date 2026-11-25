@@ -8,6 +8,7 @@ import { initOrientation, ORIENTATION_SERVICE, ORIENTATION_VALUE } from "./orien
 import { ShellRunner } from "./shell.js";
 import * as smp from "./smp.js";
 import * as usb from "./usb.js";
+import { initLayout } from "./layout.js";
 
 const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // browser -> board
@@ -45,9 +46,11 @@ const ui = {
 	firmwareLatest: $("firmware-latest"),
 	upgradeBle: $("upgrade-ble"),
 	upgradeUsb: $("upgrade-usb"),
-	usbSteps: $("usb-steps"),
+	usbPanel: $("usb-panel"),
+	usbChoices: $("usb-choices"),
+	usbDrive: $("usb-drive"),
+	usbManual: $("usb-manual"),
 	usbDownload: $("usb-download"),
-	usbBootloader: $("usb-bootloader"),
 	usbFindLegacy: $("usb-find-legacy"),
 	usbFind: $("usb-find"),
 	usbResult: $("usb-result"),
@@ -94,11 +97,22 @@ term.open(ui.terminal);
 fit.fit();
 new ResizeObserver(() => fit.fit()).observe(ui.terminal);
 
-term.onData((data) => {
+// Typed in the console, here or in its popped-out window.
+function sendInput(data) {
 	if (state.nusRx) {
 		write(state.nusRx, encoder.encode(data)).catch(() => {});
 	}
-});
+}
+
+term.onData(sendInput);
+
+// Cards and the console drawer; told of all output for the popped-out console.
+const layout = initLayout({ term, sendInput });
+
+function consoleWrite(data) {
+	term.write(data);
+	layout.output(data);
+}
 
 // The control cards run shell commands over the same stream as the console.
 const shell = new ShellRunner({
@@ -108,7 +122,7 @@ const shell = new ShellRunner({
 		}
 		return write(state.nusRx, encoder.encode(text));
 	},
-	display: (bytes) => term.write(bytes),
+	display: consoleWrite,
 });
 
 const orientation = initOrientation();
@@ -122,7 +136,7 @@ const controls = initControls({
 });
 
 function termNote(text) {
-	term.write(`\r\n\x1b[2m-- ${text} --\x1b[0m\r\n`);
+	consoleWrite(`\r\n\x1b[2m-- ${text} --\x1b[0m\r\n`);
 }
 
 // ------------------------------------------------------------------ GATT ---
@@ -631,51 +645,12 @@ function updateControls() {
 	if (!BLUETOOTH) {
 		ui.connect.disabled = true;
 	}
-	ui.usbBootloader.disabled = !connected || state.busy;
+	ui.usbFindLegacy.disabled = state.busy;
+	ui.usbFind.disabled = state.busy;
+	ui.usbDrive.disabled = state.busy;
 	// No shell commands while an upgrade has the link busy.
 	controls.setConnected(connected && !state.busy);
 }
-
-// Side-panel cards fold away: all closed to begin with, one open at a time,
-// and the one just opened is brought to the top of the panel.
-function initAccordion() {
-	const cards = [...document.querySelectorAll("#controls .card")];
-
-	for (const card of cards) {
-		const head = card.querySelector(".card-head");
-
-		const toggle = () => {
-			const open = !card.classList.contains("open");
-
-			for (const other of cards) {
-				other.classList.toggle("open", open && other === card);
-				other.querySelector(".card-head")
-					.setAttribute("aria-expanded", String(open && other === card));
-			}
-			if (open) {
-				card.scrollIntoView({ block: "start", behavior: "smooth" });
-			}
-		};
-
-		head.setAttribute("role", "button");
-		head.setAttribute("tabindex", "0");
-		head.setAttribute("aria-expanded", "false");
-		head.addEventListener("click", (event) => {
-			// Buttons in the heading (Refresh) act; they do not fold the card.
-			if (!event.target.closest("button")) {
-				toggle();
-			}
-		});
-		head.addEventListener("keydown", (event) => {
-			if (event.target === head && (event.key === "Enter" || event.key === " ")) {
-				event.preventDefault();
-				toggle();
-			}
-		});
-	}
-}
-
-initAccordion();
 
 ui.connect.addEventListener("click", async () => {
 	if (state.smpChar) {
@@ -700,55 +675,230 @@ ui.refresh.addEventListener("click", () => {
 ui.file.addEventListener("change", chooseFile);
 ui.upload.addEventListener("click", () => upgrade(state.firmware));
 ui.upgradeBle.addEventListener("click", () => {
-	ui.usbSteps.hidden = true;
+	ui.usbPanel.hidden = true;
 	upgrade(state.latest.firmware);
 });
-ui.upgradeUsb.addEventListener("click", () => {
-	ui.usbSteps.hidden = !ui.usbSteps.hidden;
-});
-// Getting a board on USB into USB mode (the XIAO-SENSE drive): a legacy Cato
-// over USB HID, a board with this firmware over its USB console.
+
+// ------------------------------------------------------ Upgrade over USB ---
+//
+// One press does as much as the browser lets it: restart the board into USB
+// mode (where it is a drive, see usb.DRIVE_NAMES), then write the firmware file onto
+// that drive. The browser has the user pick a USB device and the drive the
+// first time; after that the page may use them without asking.
+
+const DRIVE_WAIT_MS = 12000; // a restart into USB mode takes a few seconds
+const DOUBLE_TAP_WAIT_MS = 60000;
+const DOUBLE_TAP = "Double-tap the board's reset button";
+
+/** The remembered drives the page may write to. */
+async function usableDrives(ask = false) {
+	const drives = [];
+
+	for (const drive of await usb.rememberedDrives()) {
+		if (await usb.mayWriteDrive(drive, ask)) {
+			drives.push(drive);
+		}
+	}
+	return drives;
+}
+
 function showUsbResult(text, kind = "") {
 	ui.usbResult.textContent = text;
 	ui.usbResult.className = `note ${kind}`;
 }
 
-async function findOnUsb(button, find) {
-	button.disabled = true;
-	showUsbResult("Choose the board in the list the browser shows…");
-	try {
-		const kind = await find();
+async function downloadUsbFirmware() {
+	const name = state.latest.info.usb;
+	const bytes = new Uint8Array(await (await fetchFirmwareFile(name)).arrayBuffer());
 
-		if (!kind) {
-			throw new DOMException("Nothing chosen", "NotFoundError");
+	if (!usb.isUf2(bytes)) {
+		throw new Error(`${name} is not a firmware file`);
+	}
+	return bytes;
+}
+
+let usbAttempt = 0; // counts presses, so that an overtaken wait can tell
+
+function usbBusy(busy) {
+	if (busy) {
+		usbAttempt++;
+	}
+	state.busy = busy;
+	updateControls();
+}
+
+/** Starts an upgrade: gets the board into USB mode by whatever way needs no asking. */
+async function upgradeOverUsb() {
+	ui.usbPanel.hidden = false;
+	ui.usbChoices.hidden = true;
+	ui.usbDrive.hidden = true;
+	ui.log.replaceChildren();
+	usbBusy(true);
+	try {
+		// First, while the press still counts for the browser's permission.
+		const drives = await usableDrives(true);
+		const mounted = await usb.mountedDrive(drives);
+
+		if (mounted) {
+			await installFromDrive(mounted);
+			return;
 		}
 
-		const found = `Found ${usb.describe(kind)}.`;
+		let kind = null;
 
-		if (kind === usb.KIND_CURRENT || kind === usb.KIND_LEGACY) {
-			showUsbResult(`${found} It is restarting into USB mode: carry on when the ` +
-				      "XIAO-SENSE drive appears.", "ok");
-		} else if (kind === usb.KIND_BOOTLOADER) {
-			showUsbResult(`${found} Carry on with the next step.`, "ok");
+		if (state.smpChar) {
+			showUsbResult("Restarting the board into USB mode…");
+			await shell.fire("bootloader");
+			kind = usb.KIND_CURRENT;
 		} else {
-			showUsbResult(`${found} Double-click the board's reset button instead.`, "error");
+			showUsbResult("Looking for the board on USB…");
+			kind = await usb.restartKnownIntoUsbMode();
+		}
+
+		if (kind) {
+			await afterRestart(kind, drives);
+		} else {
+			ui.usbFindLegacy.hidden = !usb.HID_SUPPORTED;
+			ui.usbFind.hidden = !usb.SERIAL_SUPPORTED;
+			ui.usbChoices.hidden = !usb.HID_SUPPORTED && !usb.SERIAL_SUPPORTED;
+			ui.usbDrive.hidden = !usb.DRIVE_SUPPORTED;
+			showUsbResult(ui.usbChoices.hidden
+				? `${DOUBLE_TAP} to put it in USB mode.`
+				: "Plug the board into this computer and choose what it is. If its " +
+				  `drive (${usb.DRIVE_NAMES}) is already showing, choose the drive instead.`);
 		}
 	} catch (err) {
-		showUsbResult(err.name === "NotFoundError"
-			? "No board chosen. If it is not in the list, double-click its reset button instead."
-			: `Could not use the board over USB (${err.message}). Close anything else that ` +
-			  "is using it, or double-click its reset button instead.", "error");
+		showUsbResult(`Could not upgrade over USB (${err.message}). ${DOUBLE_TAP} to put ` +
+			      "the board in USB mode, then choose its drive.", "error");
+		ui.usbDrive.hidden = !usb.DRIVE_SUPPORTED;
 	} finally {
-		button.disabled = false;
+		usbBusy(false);
+	}
+}
+
+/**
+ * The board has been told to restart into USB mode: carry on to its drive.
+ * A board that does not get there has to be double-tapped.
+ */
+async function afterRestart(kind, drives) {
+	const found = kind === usb.KIND_BOOTLOADER
+		? `Found ${usb.describe(kind)}.`
+		: `Found ${usb.describe(kind)} and told it to restart into USB mode.`;
+
+	ui.usbChoices.hidden = true;
+
+	if (!usb.DRIVE_SUPPORTED) {
+		ui.usbManual.open = true;
+		showUsbResult(`${found} A drive named ${usb.DRIVE_NAMES} appears: download the ` +
+			      "firmware file and copy it there. If no drive appears, " +
+			      `${DOUBLE_TAP.toLowerCase()}.`, "ok");
+		return;
+	}
+
+	drives = drives || await usableDrives();
+	if (kind === usb.KIND_UNKNOWN) {
+		showUsbResult(`Found ${usb.describe(kind)}. ${DOUBLE_TAP} to put it in USB ` +
+			      "mode.", "error");
+	} else if (!drives.length) {
+		ui.usbDrive.hidden = false;
+		showUsbResult(`${found} When the drive named ${usb.DRIVE_NAMES} appears, choose ` +
+			      "it to install the firmware. If none appears within a few seconds, " +
+			      `${DOUBLE_TAP.toLowerCase()}.`, "ok");
+		return;
+	} else {
+		showUsbResult(`${found} Waiting for its drive…`);
+	}
+
+	let drive = kind === usb.KIND_UNKNOWN
+		? null
+		: await usb.waitForDrive(drives, DRIVE_WAIT_MS);
+
+	if (!drive) {
+		// It did not switch by itself. Its drive may be one not seen before
+		// (the two names), so the button stays while known drives are watched.
+		ui.usbDrive.hidden = false;
+		showUsbResult(`The board did not switch to USB mode. ${DOUBLE_TAP}` +
+			      (drives.length ? "." : ", then choose its drive " +
+			      `(${usb.DRIVE_NAMES}).`), "error");
+		if (!drives.length) {
+			return;
+		}
+		// Not busy meanwhile, so that the drive can be chosen by hand.
+		usbBusy(false);
+
+		const attempt = usbAttempt;
+
+		drive = await usb.waitForDrive(drives, DOUBLE_TAP_WAIT_MS);
+		if (!drive || attempt !== usbAttempt) {
+			return;
+		}
+		usbBusy(true);
+	}
+	await installFromDrive(drive);
+}
+
+/** Writes the latest firmware onto the board's drive. */
+async function installFromDrive(drive) {
+	ui.usbChoices.hidden = true;
+	ui.usbDrive.hidden = true;
+	showUsbResult("Downloading the firmware…");
+
+	const bytes = await downloadUsbFirmware();
+
+	showUsbResult("Installing. Leave the board plugged in.");
+	ui.upgradeProgress.hidden = false;
+	try {
+		const taken = await usb.installOnDrive(drive, state.latest.info.usb, bytes,
+			(fraction) => setProgress(fraction, `${Math.round(fraction * 100)} %`));
+
+		if (taken) {
+			showUsbResult(`Firmware ${state.latest.info.version} is installed. The board ` +
+				      "has restarted with it.", "ok");
+		} else {
+			ui.usbDrive.hidden = false;
+			showUsbResult("The board did not take the firmware. Choose the drive to " +
+				      "try again.", "error");
+		}
+	} finally {
+		ui.upgradeProgress.hidden = true;
+	}
+}
+
+// Runs one step that the user started with a button.
+async function usbStep(waiting, step) {
+	usbBusy(true);
+	showUsbResult(waiting);
+	try {
+		await step();
+	} catch (err) {
+		showUsbResult({
+			AbortError: "Nothing was chosen.",
+			NotFoundError: "That is not the board. For the drive, choose the one named " +
+				       `${usb.DRIVE_NAMES}; if the board is not listed, ` +
+				       `${DOUBLE_TAP.toLowerCase()}.`,
+		}[err.name] || `Could not reach the board (${err.message}). ${DOUBLE_TAP} to put ` +
+			       "it in USB mode, then choose its drive.", "error");
+		ui.usbDrive.hidden = !usb.DRIVE_SUPPORTED;
+	} finally {
+		usbBusy(false);
 		checkLegacyOnUsb();
 	}
 }
 
-ui.usbFindLegacy.hidden = !usb.HID_SUPPORTED;
-ui.usbFindLegacy.addEventListener("click", () => findOnUsb(ui.usbFindLegacy,
-	async () => (await usb.restartLegacyIntoUsbMode()) && usb.KIND_LEGACY));
-ui.usbFind.hidden = !usb.SERIAL_SUPPORTED;
-ui.usbFind.addEventListener("click", () => findOnUsb(ui.usbFind, usb.restartSerialIntoUsbMode));
+ui.upgradeUsb.addEventListener("click", upgradeOverUsb);
+ui.usbFindLegacy.addEventListener("click", () => usbStep(
+	"Choose the board in the list the browser shows…", async () => {
+		if (!(await usb.restartLegacyIntoUsbMode())) {
+			throw new DOMException("Nothing chosen", "AbortError");
+		}
+		await afterRestart(usb.KIND_LEGACY);
+	}));
+ui.usbFind.addEventListener("click", () => usbStep(
+	"Choose the board in the list the browser shows…",
+	async () => afterRestart(await usb.restartSerialIntoUsbMode())));
+ui.usbDrive.addEventListener("click", () => usbStep(
+	`Choose the drive named ${usb.DRIVE_NAMES}…`,
+	async () => installFromDrive(await usb.chooseDrive())));
 
 // A legacy Cato the page has been given access to before is noticed as soon
 // as it is plugged in (the browser reveals no others without being asked).
@@ -757,9 +907,6 @@ async function checkLegacyOnUsb() {
 
 	if (present !== state.legacyOnUsb) {
 		state.legacyOnUsb = present;
-		if (present) {
-			ui.usbSteps.hidden = false;
-		}
 		showFirmwareStatus();
 	}
 }
@@ -770,12 +917,8 @@ if (usb.HID_SUPPORTED) {
 	checkLegacyOnUsb();
 }
 
-ui.usbBootloader.addEventListener("click", () => {
-	// The board drops the connection and shows up as the USB drive.
-	shell.fire("bootloader").catch(() => {});
-});
 ui.clear.addEventListener("click", () => {
-	term.clear();
+	layout.clear();
 	term.focus();
 });
 
@@ -795,10 +938,14 @@ if ("serviceWorker" in navigator) {
 if (!BLUETOOTH) {
 	ui.unsupported.hidden = false;
 	ui.connect.disabled = true;
-	// Bluetooth upgrades are not offered: USB is the way, so show its steps.
+	// Bluetooth upgrades are not offered: USB is the way.
 	document.body.classList.add("no-bluetooth");
 	ui.upgradeUsb.classList.add("primary");
-	ui.usbSteps.hidden = false;
+	// Nor, without Bluetooth, is there usually any way to reach USB devices.
+	if (!usb.DRIVE_SUPPORTED) {
+		ui.usbPanel.hidden = false;
+		ui.usbManual.open = true;
+	}
 } else {
 	updateControls();
 }
