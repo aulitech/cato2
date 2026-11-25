@@ -128,7 +128,7 @@ made with:
 
 ```
 Cato_1A2B:~$ version
-firmware 0.2.3
+firmware 0.3.0
 ```
 
 `factory_reset confirm` erases everything the board has stored – name, blink,
