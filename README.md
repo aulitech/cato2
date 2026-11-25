@@ -261,6 +261,15 @@ The settings are kept across resets. The zero offset is measured when the
 board has been still for a second, so let it rest briefly after power-up if
 the pointer creeps. Buttons and the wheel still come from `hid mouse`.
 
+**Orientation stream.** The fused orientation is also notified outside HID,
+for applications that are not HID hosts: service
+`7c3b0001-5f1e-4c8a-9d2e-3a6b8f1c2d4e`, characteristic `7c3b0002-…`, eight
+bytes holding the quaternion x, y, z, w (board to room, Z up) as little-endian
+16-bit integers scaled by 10000, 50 times a second while anything is
+subscribed. It needs a paired link like everything else, and does not depend
+on which HID reports are enabled. The web app's **Orientation** card uses it
+to draw the board turning in 3D.
+
 **Two HID services.** A HID over GATT report map is limited to 512 bytes, so
 the mouse and keyboard are one HID service and the three sensors another.
 
@@ -322,7 +331,8 @@ It connects to the first board it finds; pass a name
 
 **Web app** – a browser page with the console, fold-away controls for every
 command above (name, restart, factory reset, blink, IMU, paired devices,
-sleep, mouse and keyboard, bootloader) and firmware upgrade, all over one Bluetooth connection. The
+sleep, mouse and keyboard, bootloader), a live 3D view of the board's
+orientation and firmware upgrade, all over one Bluetooth connection. The
 controls run the same shell commands you would type, visibly in the console.
 It needs Chrome or Edge on a computer or Android; Safari, Firefox and iOS have
 no Web Bluetooth.

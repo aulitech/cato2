@@ -4,6 +4,7 @@
 // Web Bluetooth connection.
 
 import { initControls } from "./controls.js";
+import { initOrientation, ORIENTATION_SERVICE, ORIENTATION_VALUE } from "./orientation.js";
 import { ShellRunner } from "./shell.js";
 import * as smp from "./smp.js";
 
@@ -94,6 +95,7 @@ const shell = new ShellRunner({
 	display: (bytes) => term.write(bytes),
 });
 
+const orientation = initOrientation();
 const controls = initControls({
 	shell,
 	onName: (name) => {
@@ -164,6 +166,18 @@ async function openServices() {
 	state.smpChar.addEventListener("characteristicvaluechanged", onSmpNotification);
 	await state.smpChar.startNotifications();
 
+	// Not in older firmware: the viewer then says so.
+	let orientationValue = null;
+
+	try {
+		const service = await server.getPrimaryService(ORIENTATION_SERVICE);
+
+		orientationValue = await service.getCharacteristic(ORIENTATION_VALUE);
+	} catch {
+		// no orientation stream
+	}
+	orientation.setSource(orientationValue, true);
+
 	assembler.reset();
 	state.writeSize = LARGE_WRITE;
 }
@@ -171,7 +185,7 @@ async function openServices() {
 async function connect() {
 	const device = await navigator.bluetooth.requestDevice({
 		filters: [{ services: [NUS_SERVICE] }, { namePrefix: "XIAO" }],
-		optionalServices: [NUS_SERVICE, SMP_SERVICE],
+		optionalServices: [NUS_SERVICE, SMP_SERVICE, ORIENTATION_SERVICE],
 	});
 
 	if (state.device && state.device !== device) {
@@ -198,6 +212,7 @@ function onConnected() {
 }
 
 function onDisconnected() {
+	orientation.setSource(null);
 	state.nusRx = null;
 	state.smpChar = null;
 	shell.reset();

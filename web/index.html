@@ -265,6 +265,75 @@ td:last-child, th:last-child { padding-right: 0; }
 #bonds-list td:last-child { text-align: right; }
 
 input[type="file"] { width: 100%; }
+/* Orientation viewer: a slab of six faces, turned as a whole by orientation.js. */
+#orientation-scene {
+	height: 230px;
+	perspective: 700px;
+	background: var(--inset);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	overflow: hidden;
+	--w: 150px; /* board X */
+	--d: 110px; /* board Y */
+	--h: 22px;  /* board Z */
+}
+#orientation-camera, #orientation-model, #orientation-floor, #orientation-model .face {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform-style: preserve-3d;
+}
+#orientation-camera { transform: rotateX(-24deg); }
+#orientation-floor {
+	width: 260px;
+	height: 260px;
+	margin: -130px 0 0 -130px;
+	transform: translateY(95px) rotateX(90deg);
+	border-radius: 50%;
+	background: radial-gradient(closest-side, color-mix(in srgb, var(--muted) 30%, transparent), transparent);
+}
+#orientation-model .face {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	border: 1px solid rgba(0, 0, 0, 0.45);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	color: #ffffff;
+	backface-visibility: hidden;
+}
+#orientation-model .top, #orientation-model .bottom {
+	width: var(--w);
+	height: var(--d);
+	margin: calc(var(--d) / -2) 0 0 calc(var(--w) / -2);
+}
+#orientation-model .front, #orientation-model .back {
+	width: var(--w);
+	height: var(--h);
+	margin: calc(var(--h) / -2) 0 0 calc(var(--w) / -2);
+}
+#orientation-model .left, #orientation-model .right {
+	width: var(--d);
+	height: var(--h);
+	margin: calc(var(--h) / -2) 0 0 calc(var(--d) / -2);
+}
+#orientation-model .top    { transform: rotateX(90deg) translateZ(calc(var(--h) / 2)); background: #1f7a4d; font-size: 14px; }
+#orientation-model .bottom { transform: rotateX(-90deg) translateZ(calc(var(--h) / 2)); background: #4a5560; }
+#orientation-model .front  { transform: translateZ(calc(var(--d) / 2)); background: #2f8f5d; }
+#orientation-model .back   { transform: rotateY(180deg) translateZ(calc(var(--d) / 2)); background: #17603c; }
+#orientation-model .right  { transform: rotateY(90deg) translateZ(calc(var(--w) / 2)); background: #c2410c; }
+#orientation-model .left   { transform: rotateY(-90deg) translateZ(calc(var(--w) / 2)); background: #17603c; }
+#orientation-model .axis { position: absolute; font-size: 11px; font-weight: 600; opacity: 0.85; }
+#orientation-model .axis.x { right: 6px; top: 50%; transform: translateY(-50%); }
+#orientation-model .axis.y { top: 4px; left: 50%; transform: translateX(-50%); }
+#orientation-roll, #orientation-pitch, #orientation-yaw {
+	display: inline-block;
+	min-width: 3.2em;
+	font-variant-numeric: tabular-nums;
+}
+
 #latest-info { margin: 0 0 6px; font-size: 13px; }
 #latest a { font-size: 13px; color: var(--accent, inherit); }
 #file-info { margin: 6px 0 0; font-size: 12px; color: var(--muted); min-height: 1.45em; }
@@ -573,6 +642,35 @@ progress { width: 100%; height: 8px; }
 					mouse and keyboard, which may be this one.
 				</p>
 				<p class="message"></p>
+			</div>
+		</section>
+
+		<section class="card" data-card="orientation">
+			<div class="card-head">
+				<h2>Orientation</h2>
+				<span id="orientation-rate" class="note"></span>
+			</div>
+			<div class="card-body">
+				<div id="orientation-scene">
+					<div id="orientation-camera">
+						<div id="orientation-floor"></div>
+						<div id="orientation-model">
+							<div class="face top">TOP<span class="axis x">X →</span><span class="axis y">Y ↑</span></div>
+							<div class="face bottom">BOTTOM</div>
+							<div class="face front">−Y</div>
+							<div class="face back">+Y</div>
+							<div class="face right">+X</div>
+							<div class="face left">−X</div>
+						</div>
+					</div>
+				</div>
+				<div class="row">
+					<span>Roll <strong id="orientation-roll">–</strong></span>
+					<span>Pitch <strong id="orientation-pitch">–</strong></span>
+					<span>Heading <strong id="orientation-yaw">–</strong></span>
+					<button id="orientation-zero" class="small" disabled>Face forward</button>
+				</div>
+				<p id="orientation-note" class="note"></p>
 			</div>
 		</section>
 

@@ -19,6 +19,9 @@
  * "hid rate". Each sensor also has the HID Sensor property (feature) report
  * that operating system sensor drivers use to start, stop and pace it.
  *
+ * The orientation is also available outside HID, as a notification on a small
+ * service of its own, which is what the web app's orientation viewer reads.
+ *
  * With "hid air on" the board is also an air mouse: turning it moves the
  * pointer. The gyroscope's turn rates are sent as mouse movement, 100 times a
  * second.
@@ -741,6 +744,47 @@ static void send_sensor_reports(const float accel_g[3], const float gyro_dps[3])
 	}
 }
 
+/* ------------------------------------------------- orientation stream --- */
+
+/*
+ * The fused orientation for applications that are not HID hosts, such as the
+ * web app's viewer: one characteristic that notifies the quaternion x, y, z,
+ * w (board to room, each scaled by 10000, little endian) 50 times a second
+ * while anybody is subscribed. Like the rest, only on an encrypted link.
+ */
+#define UUID_ORIENTATION_SERVICE BT_UUID_DECLARE_128( \
+	BT_UUID_128_ENCODE(0x7c3b0001, 0x5f1e, 0x4c8a, 0x9d2e, 0x3a6b8f1c2d4e))
+#define UUID_ORIENTATION_VALUE BT_UUID_DECLARE_128( \
+	BT_UUID_128_ENCODE(0x7c3b0002, 0x5f1e, 0x4c8a, 0x9d2e, 0x3a6b8f1c2d4e))
+
+#define ORIENTATION_STREAM_HZ 50
+
+static atomic_t stream_wanted;
+
+static void on_stream_subscription(const struct bt_gatt_attr *attr, uint16_t value)
+{
+	atomic_set(&stream_wanted, value == BT_GATT_CCC_NOTIFY);
+}
+
+BT_GATT_SERVICE_DEFINE(orientation_service,
+	BT_GATT_PRIMARY_SERVICE(UUID_ORIENTATION_SERVICE),
+	BT_GATT_CHARACTERISTIC(UUID_ORIENTATION_VALUE, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE,
+			       NULL, NULL, NULL),
+	BT_GATT_CCC(on_stream_subscription, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT),
+);
+
+static void send_orientation_stream(void)
+{
+	const float quaternion[4] = { q.x, q.y, q.z, q.w };
+	uint8_t value[8];
+
+	for (int i = 0; i < 4; i++) {
+		sys_put_le16(to_int16(quaternion[i] * 10000.0f), &value[2 * i]);
+	}
+	/* To every subscriber. Dropped if the link is busy: the next one follows. */
+	(void)bt_gatt_notify(NULL, &orientation_service.attrs[1], value, sizeof(value));
+}
+
 /* Movement not sent yet: the fractions of a count left over from each sample. */
 static float air_pending[2];
 
@@ -901,6 +945,7 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 	int64_t last_sample = 0;
 	bool streaming = false;
 	int since_report = 0;
+	int since_stream = 0;
 
 	while (1) {
 		int rate = atomic_get(&sensor_rate_hz);
@@ -909,7 +954,8 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 
 		if (atomic_get(&host_count) == 0 ||
 		    !(sensor_wanted(INPUT_ACCEL) || sensor_wanted(INPUT_GYRO) ||
-		      sensor_wanted(INPUT_ORIENTATION) || air_active())) {
+		      sensor_wanted(INPUT_ORIENTATION) || air_active() ||
+		      atomic_get(&stream_wanted))) {
 			streaming = false;
 			k_msleep(200);
 			continue;
@@ -941,6 +987,14 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 				      turn_dps[2] * deg_to_rad,
 				      accel_g[0], accel_g[1], accel_g[2], dt);
 			last_sample = now;
+
+			since_stream += ORIENTATION_STREAM_HZ;
+			if (since_stream >= SAMPLE_HZ) {
+				since_stream -= SAMPLE_HZ;
+				if (atomic_get(&stream_wanted)) {
+					send_orientation_stream();
+				}
+			}
 
 			up_update(turn_dps, accel_g, dt);
 			if (air_active()) {
