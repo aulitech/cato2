@@ -204,6 +204,7 @@ enabled: mouse orientation
 hosts 1, listening to: mouse keyboard accel gyro orientation
 sensor rate 50 Hz
 keyboard LEDs 0x00
+air mouse off, speed 20 20, accel 60 deg/s, dead zone 2 deg/s, axes auto, forward +y
 link: interval 15.00 ms, 2M, MTU 498
 bt_nus:~$ hid mouse move 50 -20
 ```
@@ -213,6 +214,10 @@ bt_nus:~$ hid mouse move 50 -20
 - `hid rate <Hz>` – rate of the sensor reports, 1 to 100 Hz (default 50)
 - `hid mouse move <x> <y>`, `hid mouse click [left|right|middle]`,
   `hid mouse scroll <steps>`
+- `hid air on`, `hid air off` – air mouse, see below
+- `hid air speed <x> [y]`, `hid air accel <0-250>`, `hid air deadzone <0-20>`,
+  `hid air forward <axis>`,
+  `hid air axes auto` or `hid air axes <x> <y>`
 - `hid key <key>` – tap one key: a character, a name (`enter` `esc` `tab`
   `space` `backspace` `delete` `insert` `home` `end` `pageup` `pagedown` `up`
   `down` `left` `right` `capslock` `f1`–`f12`), optionally with `ctrl` `shift`
@@ -221,6 +226,40 @@ bt_nus:~$ hid mouse move 50 -20
 
 `hid` also lists, for each connected device, the connection interval, radio
 mode and MTU it negotiated.
+
+**Air mouse.** With the mouse report enabled and `hid air on`, turning the
+board moves the pointer, like a presentation remote. A hundred times a second
+the gyroscope's turn rates, with its zero offset removed, become relative
+mouse movement:
+
+- `hid air speed <x> [y]` – pointer counts per degree turned, 1 to 200,
+  separately for sideways (X) and up-down (Y); one value sets both (default
+  20 for each)
+- `hid air accel <deg/s>` – quadratic acceleration: the pointer speed grows
+  with the square of the turn rate, so slow turns are precise and fast ones
+  cross the screen. The value is the turn rate at which the pointer moves at
+  the set speed: at half that rate it moves at half the speed, at twice that
+  rate at double (default 60). `0` turns acceleration off, and the pointer
+  speed then simply follows the turn rate.
+- `hid air deadzone` – turning slower than this many degrees per second is
+  ignored, so tremor and noise do not move the pointer (default 2)
+
+The pointer directions come from gravity (`hid air axes auto`, the default),
+so they are right however the board is held or mounted, and stay right when
+the wrist rolls: turning about the vertical moves the pointer sideways, and
+tipping the board's forward axis up or down moves it up or down.
+
+- `hid air forward <axis>` – the board axis that points at the screen, one of
+  `+x -x +y -y +z -z` (default `+y`). This is the one thing gravity cannot
+  tell. While that axis points within about 17 degrees of straight up or
+  down, sideways has no meaning and the pointer holds still.
+- `hid air axes <x> <y>` – fixed axes instead: the gyroscope axis that drives
+  pointer X and the one that drives pointer Y, each with a sign. `-z -x` is
+  what automatic gives for a board lying flat with forward `+y`.
+
+The settings are kept across resets. The zero offset is measured when the
+board has been still for a second, so let it rest briefly after power-up if
+the pointer creeps. Buttons and the wheel still come from `hid mouse`.
 
 **Two HID services.** A HID over GATT report map is limited to 512 bytes, so
 the mouse and keyboard are one HID service and the three sensors another.

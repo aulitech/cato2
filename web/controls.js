@@ -390,9 +390,58 @@ export function initControls({ shell, onName }) {
 		hidSwitches[report] = box;
 	}
 
+	const AIR_AXES = ["+x", "-x", "+y", "-y", "+z", "-z"]
+		.map((axis) => [axis, `gyro ${axis[1].toUpperCase()}${axis[0] === "-" ? ", reversed" : ""}`]);
+
+	fill($("air-axis-x"), AIR_AXES);
+	fill($("air-axis-y"), AIR_AXES);
+	fill($("air-forward"), ["+x", "-x", "+y", "-y", "+z", "-z"]
+		.map((axis) => [axis, `${axis[1].toUpperCase()}${axis[0] === "-" ? ", reversed" : ""}`]));
+
+	const airSetting = (id, command) => $(id).addEventListener("change", () => act("hid", async () => {
+		try {
+			await shell.run(command());
+		} finally {
+			await loadHid().catch(() => {});
+		}
+	}, "Applied and saved."));
+
+	airSetting("air-on", () => `hid air ${$("air-on").checked ? "on" : "off"}`);
+	const airSpeed = () => `hid air speed ${$("air-speed-x").value} ${$("air-speed-y").value}`;
+
+	airSetting("air-speed-x", airSpeed);
+	airSetting("air-speed-y", airSpeed);
+	airSetting("air-accel", () => `hid air accel ${$("air-accel").value}`);
+	airSetting("air-deadzone", () => `hid air deadzone ${$("air-deadzone").value}`);
+	// Until fixed axes have been chosen once, start from the firmware's defaults.
+	const manualAxes = () =>
+		`hid air axes ${$("air-axis-x").value || "-z"} ${$("air-axis-y").value || "-x"}`;
+
+	airSetting("air-mode", () => ($("air-mode").value === "auto" ? "hid air axes auto" : manualAxes()));
+	airSetting("air-forward", () => `hid air forward ${$("air-forward").value}`);
+	airSetting("air-axis-x", manualAxes);
+	airSetting("air-axis-y", manualAxes);
+
 	async function loadHid() {
 		const hid = parseHid(await shell.run("hid"));
 		const rate = String(hid.rate);
+
+		$("hid-air").hidden = !hid.air;
+		if (hid.air) {
+			$("air-on").checked = hid.air.on;
+			$("air-speed-x").value = hid.air.speedX;
+			$("air-speed-y").value = hid.air.speedY;
+			$("air-accel").value = hid.air.accel;
+			$("air-deadzone").value = hid.air.deadzone;
+			$("air-mode").value = hid.air.auto ? "auto" : "manual";
+			$("air-forward").value = hid.air.forward;
+			$("air-auto").hidden = !hid.air.auto;
+			$("air-manual").hidden = hid.air.auto;
+			if (!hid.air.auto) {
+				$("air-axis-x").value = hid.air.axisX;
+				$("air-axis-y").value = hid.air.axisY;
+			}
+		}
 
 		for (const [report, box] of Object.entries(hidSwitches)) {
 			box.checked = hid.enabled.includes(report);

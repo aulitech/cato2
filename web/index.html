@@ -508,6 +508,50 @@ progress { width: 100%; height: 8px; }
 					<button id="hid-scroll-up" class="small" disabled>Scroll up</button>
 					<button id="hid-scroll-down" class="small" disabled>Scroll down</button>
 				</div>
+				<div id="hid-air" hidden>
+					<div class="row">
+						<label><input id="air-on" type="checkbox" disabled> Air mouse</label>
+						<label for="air-deadzone">Dead zone</label>
+						<input id="air-deadzone" type="number" min="0" max="20" disabled>
+						<span class="note">°/s</span>
+					</div>
+					<div class="row">
+						<label for="air-speed-x">Speed X</label>
+						<input id="air-speed-x" type="number" min="1" max="200" disabled>
+						<label for="air-speed-y">Y</label>
+						<input id="air-speed-y" type="number" min="1" max="200" disabled>
+					</div>
+					<div class="row">
+						<label for="air-accel">Acceleration</label>
+						<input id="air-accel" type="number" min="0" max="250" disabled>
+						<span class="note">°/s (0 = off)</span>
+					</div>
+					<div class="row">
+						<label for="air-mode">Directions</label>
+						<select id="air-mode" disabled>
+							<option value="auto">Automatic, from gravity</option>
+							<option value="manual">Fixed gyroscope axes</option>
+						</select>
+					</div>
+					<div class="row" id="air-auto">
+						<label for="air-forward">Board axis pointing at the screen</label>
+						<select id="air-forward" disabled></select>
+					</div>
+					<div class="row" id="air-manual" hidden>
+						<label for="air-axis-x">Pointer X from</label>
+						<select id="air-axis-x" disabled></select>
+						<label for="air-axis-y">Y from</label>
+						<select id="air-axis-y" disabled></select>
+					</div>
+					<p class="note">
+						Turning the board moves the pointer. Needs the mouse report on.
+						Speed is pointer steps per degree, set separately for sideways (X) and
+						up-down (Y). With acceleration, slower turns than the rate given move
+						the pointer less than that and faster turns more. Automatic directions work however
+						the board is held, as long as it knows which of its axes points at
+						the screen.
+					</p>
+				</div>
 				<div class="row">
 					<label for="hid-key">Key</label>
 					<input id="hid-key" class="grow mono" type="text" placeholder="enter, ctrl+c, shift+f5"

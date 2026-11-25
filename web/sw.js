@@ -4,7 +4,7 @@
 // to the network first, so an edited or redeployed app shows up on the next
 // load; the cached copy is used only when the server cannot be reached.
 
-const CACHE = "xiao-sense-plus-v8";
+const CACHE = "xiao-sense-plus-v9";
 
 const FILES = [
 	"./",

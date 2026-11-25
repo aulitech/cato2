@@ -18,9 +18,15 @@
  * into an orientation, and the reports are sent at the rate set with
  * "hid rate". Each sensor also has the HID Sensor property (feature) report
  * that operating system sensor drivers use to start, stop and pace it.
+ *
+ * With "hid air on" the board is also an air mouse: turning it moves the
+ * pointer. The gyroscope's turn rates are sent as mouse movement, 100 times a
+ * second.
  */
 
 #include <math.h>
+#include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -358,6 +364,50 @@ static bool sensor_wanted(int index)
 }
 static uint8_t keyboard_leds;
 
+/*
+ * Air mouse: turning the board moves the pointer. Board axes are stored as
+ * 1, 2, 3 for x, y, z and negative for the opposite direction.
+ *
+ * Automatic axes work the directions out from gravity, however the board is
+ * held: turning about the vertical moves the pointer sideways, and tipping the
+ * board's "forward" axis up or down moves it up or down. Manual axes tie each
+ * pointer axis to one gyroscope axis instead.
+ */
+#define AIR_SPEED_MIN     1
+#define AIR_SPEED_MAX     200
+#define AIR_DEADZONE_MAX  20
+#define AIR_ACCEL_MAX     250
+
+static struct air_config {
+	uint8_t on;
+	uint8_t speed;    /* pointer X counts per degree turned */
+	uint8_t deadzone; /* turn rates below this many deg/s are ignored */
+	int8_t axis_x;    /* manual axes */
+	int8_t axis_y;
+	uint8_t manual;   /* 0: automatic axes */
+	int8_t forward;   /* the board axis that points at the screen */
+	uint8_t speed_y;  /* pointer Y counts per degree turned */
+	uint8_t accel;    /* turn rate (deg/s) at which the speeds apply; 0: no acceleration */
+} air = { .on = 0, .speed = 20, .deadzone = 2, .axis_x = -3, .axis_y = -1,
+	  .manual = 0, .forward = 2, .speed_y = 20, .accel = 60 };
+
+static bool air_config_valid(const struct air_config *config)
+{
+	return config->on <= 1 &&
+	       config->speed >= AIR_SPEED_MIN && config->speed <= AIR_SPEED_MAX &&
+	       config->speed_y >= AIR_SPEED_MIN && config->speed_y <= AIR_SPEED_MAX &&
+	       config->deadzone <= AIR_DEADZONE_MAX &&
+	       abs(config->axis_x) >= 1 && abs(config->axis_x) <= 3 &&
+	       abs(config->axis_y) >= 1 && abs(config->axis_y) <= 3 &&
+	       config->manual <= 1 &&
+	       abs(config->forward) >= 1 && abs(config->forward) <= 3;
+}
+
+static bool air_active(void)
+{
+	return air.on && report_enabled(INPUT_MOUSE);
+}
+
 /* ------------------------------------------------------------- sending --- */
 
 struct report {
@@ -691,6 +741,159 @@ static void send_sensor_reports(const float accel_g[3], const float gyro_dps[3])
 	}
 }
 
+/* Movement not sent yet: the fractions of a count left over from each sample. */
+static float air_pending[2];
+
+static float air_rate(const float turn_dps[3], int8_t axis)
+{
+	float rate = turn_dps[abs(axis) - 1];
+
+	return axis < 0 ? -rate : rate;
+}
+
+/*
+ * Which way is up, as a unit vector in the board's own axes. The gyroscope
+ * keeps it right while the board turns, and the accelerometer, which reads
+ * straight up when the board is not being shaken, pulls it back slowly so
+ * that it cannot drift.
+ */
+#define UP_CORRECTION_PER_S 2.0f
+/* Forward closer to vertical than this (sine of the angle) leaves no "sideways". */
+#define FORWARD_MIN_TILT    0.3f
+
+static float up[3];
+static bool up_known;
+
+static void up_update(const float turn_dps[3], const float accel_g[3], float dt)
+{
+	const float deg_to_rad = 0.017453293f;
+	float w[3] = { turn_dps[0] * deg_to_rad, turn_dps[1] * deg_to_rad,
+		       turn_dps[2] * deg_to_rad };
+	float accel = sqrtf(accel_g[0] * accel_g[0] + accel_g[1] * accel_g[1] +
+			    accel_g[2] * accel_g[2]);
+	float norm;
+
+	if (!up_known) {
+		if (accel < 0.5f) {
+			return;
+		}
+		for (int i = 0; i < 3; i++) {
+			up[i] = accel_g[i] / accel;
+		}
+		up_known = true;
+		return;
+	}
+
+	/* A direction fixed in the room turns the opposite way in the board's axes. */
+	float turned[3] = {
+		up[0] - (w[1] * up[2] - w[2] * up[1]) * dt,
+		up[1] - (w[2] * up[0] - w[0] * up[2]) * dt,
+		up[2] - (w[0] * up[1] - w[1] * up[0]) * dt,
+	};
+
+	for (int i = 0; i < 3; i++) {
+		/* Trust the accelerometer only while it reads about 1 g. */
+		if (accel > 0.8f && accel < 1.2f) {
+			turned[i] += (accel_g[i] / accel - turned[i]) * UP_CORRECTION_PER_S * dt;
+		}
+	}
+	norm = sqrtf(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]);
+	if (norm > 0.0f) {
+		for (int i = 0; i < 3; i++) {
+			up[i] = turned[i] / norm;
+		}
+	}
+}
+
+/*
+ * Pointer turn rates (deg/s, right and down positive) from gravity. Returns
+ * false while they cannot be told: forward is pointing nearly straight up or
+ * down, or up is not known yet.
+ */
+static bool air_auto_rates(const float turn_dps[3], float rate[2])
+{
+	float forward[3] = { 0.0f, 0.0f, 0.0f };
+	float right[3];
+	float tilt;
+
+	if (!up_known) {
+		return false;
+	}
+	forward[abs(air.forward) - 1] = air.forward < 0 ? -1.0f : 1.0f;
+
+	/* Forward x up points to the right, and is shorter the steeper forward is. */
+	right[0] = forward[1] * up[2] - forward[2] * up[1];
+	right[1] = forward[2] * up[0] - forward[0] * up[2];
+	right[2] = forward[0] * up[1] - forward[1] * up[0];
+	tilt = sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+	if (tilt < FORWARD_MIN_TILT) {
+		return false;
+	}
+
+	/* Turning left (anticlockwise seen from above) moves the pointer left. */
+	rate[0] = -(turn_dps[0] * up[0] + turn_dps[1] * up[1] + turn_dps[2] * up[2]);
+	/* Turning about the right-pointing axis lifts forward: pointer up. */
+	rate[1] = -(turn_dps[0] * right[0] + turn_dps[1] * right[1] +
+		    turn_dps[2] * right[2]) / tilt;
+
+	return true;
+}
+
+/* Turns one sample's turn rates (deg/s, zero offset removed) into pointer movement. */
+static void air_update(const float turn_dps[3], float dt)
+{
+	uint8_t report[MOUSE_REPORT_LEN] = { 0 };
+	float rate[2];
+	float speed;
+	float gain;
+	int16_t move[2];
+
+	if (air.manual) {
+		rate[0] = air_rate(turn_dps, air.axis_x);
+		rate[1] = air_rate(turn_dps, air.axis_y);
+	} else if (!air_auto_rates(turn_dps, rate)) {
+		return;
+	}
+	speed = sqrtf(rate[0] * rate[0] + rate[1] * rate[1]);
+
+	/*
+	 * The dead zone keeps a hand's tremor and sensor noise from moving the
+	 * pointer. Subtracting it, rather than cutting off below it, lets
+	 * movement start from zero instead of with a jump.
+	 */
+	if (speed <= air.deadzone) {
+		return;
+	}
+	/* Same direction as the turn, at the turn rate that is left above the dead zone. */
+	gain = (speed - air.deadzone) / speed;
+	/*
+	 * Acceleration: the pointer speed grows with the square of the turn rate
+	 * instead of in step with it, so slow turns are fine and precise and fast
+	 * ones cross the screen. At the reference rate it is what it would be
+	 * without acceleration; at half that rate a half, at twice that rate double.
+	 */
+	if (air.accel != 0) {
+		gain *= (speed - air.deadzone) / air.accel;
+	}
+	for (int i = 0; i < 2; i++) {
+		air_pending[i] += rate[i] * gain * dt * (i == 0 ? air.speed : air.speed_y);
+		move[i] = to_int16(truncf(air_pending[i]));
+	}
+	if (move[0] == 0 && move[1] == 0) {
+		return;
+	}
+
+	sys_put_le16(move[0], &report[1]);
+	sys_put_le16(move[1], &report[3]);
+	if (send_report(INPUT_MOUSE, report, sizeof(report)) > 0) {
+		air_pending[0] -= move[0];
+		air_pending[1] -= move[1];
+	} else {
+		/* Nobody to move a pointer for: do not save the movement up. */
+		air_pending[0] = air_pending[1] = 0.0f;
+	}
+}
+
 static void sensor_thread(void *p1, void *p2, void *p3)
 {
 	const float deg_to_rad = 0.017453293f;
@@ -706,7 +909,7 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 
 		if (atomic_get(&host_count) == 0 ||
 		    !(sensor_wanted(INPUT_ACCEL) || sensor_wanted(INPUT_GYRO) ||
-		      sensor_wanted(INPUT_ORIENTATION))) {
+		      sensor_wanted(INPUT_ORIENTATION) || air_active())) {
 			streaming = false;
 			k_msleep(200);
 			continue;
@@ -719,20 +922,30 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 			last_sample = next - 1000 / SAMPLE_HZ;
 			fusion_reset();
 			bias_reset_window();
+			air_pending[0] = air_pending[1] = 0.0f;
+			up_known = false;
 		}
 
 		if (imu_sample(accel_g, gyro_dps) == 0) {
 			int64_t now = k_uptime_get();
+			/* Use the time that really passed: a slow link can delay the loop. */
+			float dt = (now - last_sample) / 1000.0f;
+			float turn_dps[3];
 
 			bias_update(accel_g, gyro_dps);
+			for (int i = 0; i < 3; i++) {
+				turn_dps[i] = gyro_dps[i] - gyro_bias[i];
+			}
 
-			/* Use the time that really passed: a slow link can delay the loop. */
-			fusion_update((gyro_dps[0] - gyro_bias[0]) * deg_to_rad,
-				      (gyro_dps[1] - gyro_bias[1]) * deg_to_rad,
-				      (gyro_dps[2] - gyro_bias[2]) * deg_to_rad,
-				      accel_g[0], accel_g[1], accel_g[2],
-				      (now - last_sample) / 1000.0f);
+			fusion_update(turn_dps[0] * deg_to_rad, turn_dps[1] * deg_to_rad,
+				      turn_dps[2] * deg_to_rad,
+				      accel_g[0], accel_g[1], accel_g[2], dt);
 			last_sample = now;
+
+			up_update(turn_dps, accel_g, dt);
+			if (air_active()) {
+				air_update(turn_dps, dt);
+			}
 
 			since_report += rate;
 			if (since_report >= SAMPLE_HZ) {
@@ -760,6 +973,27 @@ static int hid_settings_set(const char *name, size_t len, settings_read_cb read_
 {
 	uint8_t value;
 	ssize_t rc;
+
+	if (settings_name_steq(name, "air", NULL)) {
+		/* Fields added since it was saved keep their defaults. */
+		struct air_config stored = air;
+
+		if (len > sizeof(stored)) {
+			return -EINVAL;
+		}
+		rc = read_cb(cb_arg, &stored, len);
+		if (rc < 0) {
+			return rc;
+		}
+		if (len <= offsetof(struct air_config, speed_y)) {
+			/* Saved when one speed served both directions. */
+			stored.speed_y = stored.speed;
+		}
+		if (air_config_valid(&stored)) {
+			air = stored;
+		}
+		return 0;
+	}
 
 	if (len != sizeof(value)) {
 		return -EINVAL;
@@ -913,6 +1147,32 @@ static void print_link(struct bt_conn *conn, void *user_data)
 		    bt_gatt_get_mtu(conn));
 }
 
+static void axis_name(int8_t axis, char name[3])
+{
+	name[0] = axis < 0 ? '-' : '+';
+	name[1] = "xyz"[abs(axis) - 1];
+	name[2] = '\0';
+}
+
+static void print_air(const struct shell *sh)
+{
+	char x[3];
+	char y[3];
+	char forward[3];
+	char axes[8] = "auto";
+
+	axis_name(air.axis_x, x);
+	axis_name(air.axis_y, y);
+	axis_name(air.forward, forward);
+	if (air.manual) {
+		snprintf(axes, sizeof(axes), "%s %s", x, y);
+	}
+	shell_print(sh, "air mouse %s, speed %u %u, accel %u deg/s, dead zone %u deg/s, "
+			"axes %s, forward %s",
+		    air.on ? "on" : "off", air.speed, air.speed_y, air.accel, air.deadzone, axes,
+		    forward);
+}
+
 static int cmd_hid(const struct shell *sh, size_t argc, char **argv)
 {
 	char list[48];
@@ -924,6 +1184,7 @@ static int cmd_hid(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "hosts %d, listening to:%s", (int)atomic_get(&host_count), list);
 	shell_print(sh, "sensor rate %d Hz", (int)atomic_get(&sensor_rate_hz));
 	shell_print(sh, "keyboard LEDs 0x%02x", keyboard_leds);
+	print_air(sh);
 	bt_conn_foreach(BT_CONN_TYPE_LE, print_link, (void *)sh);
 
 	return 0;
@@ -1139,6 +1400,147 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 	return err;
 }
 
+static int save_air(const struct shell *sh)
+{
+	int err = settings_save_one("hid/air", &air, sizeof(air));
+
+	if (err) {
+		shell_error(sh, "Applied, but not saved (err %d)", err);
+	}
+	return err;
+}
+
+static int cmd_air(const struct shell *sh, size_t argc, char **argv)
+{
+	print_air(sh);
+	return 0;
+}
+
+static int cmd_air_on(const struct shell *sh, size_t argc, char **argv)
+{
+	if (!check_enabled(sh, INPUT_MOUSE)) {
+		return -EACCES;
+	}
+	air.on = 1;
+	return save_air(sh);
+}
+
+static int cmd_air_off(const struct shell *sh, size_t argc, char **argv)
+{
+	air.on = 0;
+	return save_air(sh);
+}
+
+static int cmd_air_speed(const struct shell *sh, size_t argc, char **argv)
+{
+	int err = 0;
+	unsigned long x = shell_strtoul(argv[1], 10, &err);
+	unsigned long y = argc == 3 ? shell_strtoul(argv[2], 10, &err) : x;
+
+	if (err || x < AIR_SPEED_MIN || x > AIR_SPEED_MAX ||
+	    y < AIR_SPEED_MIN || y > AIR_SPEED_MAX) {
+		shell_error(sh, "Speed must be %d to %d (pointer counts per degree turned), "
+				"one value for both directions or one each for X and Y",
+			    AIR_SPEED_MIN, AIR_SPEED_MAX);
+		return -EINVAL;
+	}
+	air.speed = x;
+	air.speed_y = y;
+	return save_air(sh);
+}
+
+static int cmd_air_accel(const struct shell *sh, size_t argc, char **argv)
+{
+	int err = 0;
+	unsigned long value = shell_strtoul(argv[1], 10, &err);
+
+	if (err || value > AIR_ACCEL_MAX) {
+		shell_error(sh, "Give the turn rate, 1 to %d deg/s, at which the pointer moves "
+				"at the set speed, or 0 for no acceleration", AIR_ACCEL_MAX);
+		return -EINVAL;
+	}
+	air.accel = value;
+	return save_air(sh);
+}
+
+static int cmd_air_deadzone(const struct shell *sh, size_t argc, char **argv)
+{
+	int err = 0;
+	unsigned long value = shell_strtoul(argv[1], 10, &err);
+
+	if (err || value > AIR_DEADZONE_MAX) {
+		shell_error(sh, "Dead zone must be 0 to %d (deg/s)", AIR_DEADZONE_MAX);
+		return -EINVAL;
+	}
+	air.deadzone = value;
+	return save_air(sh);
+}
+
+/* "x", "+x", "-x" and so on: 0 if the text is not an axis. */
+static int8_t parse_axis(const char *text)
+{
+	int8_t sign = 1;
+	const char *letter;
+
+	if (*text == '+' || *text == '-') {
+		sign = *text == '-' ? -1 : 1;
+		text++;
+	}
+	letter = *text != '\0' && text[1] == '\0' ? strchr("xyz", *text) : NULL;
+
+	return letter != NULL ? sign * (int8_t)(letter - "xyz" + 1) : 0;
+}
+
+static int cmd_air_axes(const struct shell *sh, size_t argc, char **argv)
+{
+	int8_t x = parse_axis(argv[1]);
+	int8_t y = argc == 3 ? parse_axis(argv[2]) : 0;
+
+	if (argc == 2 && strcmp(argv[1], "auto") == 0) {
+		air.manual = 0;
+		return save_air(sh);
+	}
+	if (x == 0 || y == 0) {
+		shell_error(sh, "Give auto, or the gyroscope axis for pointer X and for "
+				"pointer Y, each one of: +x -x +y -y +z -z");
+		return -EINVAL;
+	}
+	air.axis_x = x;
+	air.axis_y = y;
+	air.manual = 1;
+	return save_air(sh);
+}
+
+static int cmd_air_forward(const struct shell *sh, size_t argc, char **argv)
+{
+	int8_t forward = parse_axis(argv[1]);
+
+	if (forward == 0) {
+		shell_error(sh, "Give the board axis that points at the screen, one of: "
+				"+x -x +y -y +z -z");
+		return -EINVAL;
+	}
+	air.forward = forward;
+	return save_air(sh);
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(air_cmds,
+	SHELL_CMD(on, NULL, "Move the pointer by turning the board", cmd_air_on),
+	SHELL_CMD(off, NULL, "Stop moving the pointer", cmd_air_off),
+	SHELL_CMD_ARG(speed, NULL, "<x> [y]  Pointer counts per degree turned, 1-200: one "
+		      "value for both directions, or X then Y", cmd_air_speed, 2, 1),
+	SHELL_CMD_ARG(accel, NULL, "<0-250>  Quadratic acceleration: the turn rate, in deg/s, "
+		      "at which the pointer moves at the set speed. 0 turns it off",
+		      cmd_air_accel, 2, 0),
+	SHELL_CMD_ARG(deadzone, NULL, "<0-20>  Ignore turning slower than this, in deg/s",
+		      cmd_air_deadzone, 2, 0),
+	SHELL_CMD_ARG(axes, NULL, "auto | <x> <y>  Work the axes out from gravity, or name the "
+		      "gyroscope axis for pointer X and Y (+x -x +y -y +z -z)", cmd_air_axes, 2, 1),
+	SHELL_CMD_ARG(forward, NULL, "<axis>  Board axis that points at the screen, for "
+		      "automatic axes (+x -x +y -y +z -z)", cmd_air_forward, 2, 0),
+	SHELL_SUBCMD_SET_END
+);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(mouse_cmds,
 	SHELL_CMD_ARG(move, NULL, "<x> <y>  Move the pointer", cmd_mouse_move, 3, 0),
 	SHELL_CMD_ARG(click, NULL, "[left|right|middle]  Click a button", cmd_mouse_click, 1, 1),
@@ -1152,6 +1554,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(hid_cmds,
 	SHELL_CMD_ARG(disable, NULL, "<mouse|keyboard|accel|gyro|orientation|all>  Turn a report off",
 		      cmd_disable, 2, 0),
 	SHELL_CMD(mouse, &mouse_cmds, "Send mouse movement, clicks and scrolling", NULL),
+	SHELL_CMD(air, &air_cmds, "Air mouse: show or change its settings", cmd_air),
 	SHELL_CMD_ARG(key, NULL, "<key>  Tap a key, e.g. enter, a, ctrl+c, shift+f5", cmd_key, 2, 0),
 	SHELL_CMD_ARG(type, NULL, "<text>  Type text (US keyboard layout)", cmd_type, 2,
 		      SHELL_OPT_ARG_CHECK_SKIP),

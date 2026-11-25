@@ -197,10 +197,25 @@ export function parseHid(lines) {
 	const hosts = find(/^hosts (\d+), listening to:(.*)$/);
 	const rate = find(/^sensor rate (\d+) Hz$/);
 
+	// Absent on firmware from before the air mouse.
+	const air = find(
+		/^air mouse (on|off), speed (\d+) (\d+), accel (\d+) deg\/s, dead zone (\d+) deg\/s, axes (?:auto|(\S+) (\S+)), forward (\S+)$/);
+
 	if (!enabled || !hosts || !rate) {
 		throw new Error("Unexpected reply to hid");
 	}
 	return {
+		air: air && {
+			on: air[1] === "on",
+			speedX: Number(air[2]),
+			speedY: Number(air[3]),
+			accel: Number(air[4]),
+			deadzone: Number(air[5]),
+			auto: !air[6],
+			axisX: air[6] || null,
+			axisY: air[7] || null,
+			forward: air[8],
+		},
 		enabled: list(enabled[1]),
 		hosts: Number(hosts[1]),
 		listening: list(hosts[2]),
