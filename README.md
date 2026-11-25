@@ -1,7 +1,10 @@
-# xiao-nrf52840-sense-plus
+# cato2
 
-Zephyr / nRF Connect SDK starter application for the
-[Seeed Studio XIAO nRF52840 Sense Plus](https://wiki.seeedstudio.com/XIAO_BLE/).
+Firmware for the Cato, a
+[Seeed Studio XIAO nRF52840 Sense Plus](https://wiki.seeedstudio.com/XIAO_BLE/),
+built on Zephyr and the nRF Connect SDK, and **MyCato**, the web app that sets
+it up, controls it and upgrades it (<https://auli-ng.netlify.app>, source in
+`web/`).
 
 - **Console** – the Zephyr shell and log output over the Nordic UART Service
   (NUS) and over USB serial
@@ -12,13 +15,15 @@ Zephyr / nRF Connect SDK starter application for the
 - **HID** – the board is a Bluetooth mouse and keyboard, and streams its
   accelerometer, gyroscope and fused orientation as HID sensor reports
 - **No debug probe needed** – MCUboot is chain-loaded by the board's stock
-  Adafruit UF2 bootloader, so the first flash is drag-and-drop
+  Adafruit UF2 bootloader, so the first flash is drag-and-drop, or one button
+  in MyCato
 
 The app blinks the RGB LED and adds shell commands to set the blink rate and
 pattern (`blink`), rename the board (`name`), manage paired devices (`bonds`),
 read and fully configure the on-board LSM6DS3TR-C IMU (`imu`), send mouse and
-keyboard input (`hid`), sleep until reset or motion (`sleep`), and restart
-into the USB bootloader (`bootloader`).
+keyboard input and use the board as an air mouse (`hid`), sleep until reset
+or motion (`sleep`), restart (`reboot`), return to factory defaults
+(`factory_reset`), and restart into the USB bootloader (`bootloader`).
 
 > **Verified on hardware** (XIAO nRF52840 Sense, UF2 bootloader 0.6.1): UF2 first
 > flash, MCUboot chain-load, the shell over BLE and USB, every shell command
@@ -26,7 +31,10 @@ into the USB bootloader (`bootloader`).
 > upgrades in both directions. Not exercised: MCUboot's automatic revert of a
 > bad image, refusing a sixth or locked-out device, more than one device
 > connected at once, and any host other than macOS (no phone, Windows or
-> Linux).
+> Linux). Also not yet tried on a real board: `factory_reset`, the erasing of a
+> legacy Cato's stored data, how the air mouse feels in the hand, and MyCato's
+> upgrade over USB (including of a legacy Cato), which has run only against a
+> simulated board.
 
 ## Requirements
 
@@ -70,6 +78,9 @@ shell command resets it into the same USB drive mode.
 
 The same procedure recovers a board at any time, since the UF2 bootloader is
 left untouched.
+
+MyCato does both steps with the published build: see
+[Upgrading over USB](#upgrading-over-usb).
 
 ## Console
 
@@ -329,26 +340,39 @@ python tools/console.py
 It connects to the first board it finds; pass a name
 (`python tools/console.py "My Board"`) to pick one.
 
-**Web app (MyCato)** – a browser page with the console, fold-away controls for every
-command above (name, restart, factory reset, blink, IMU, paired devices,
-sleep, mouse and keyboard, bootloader), a live 3D view of the board's
-orientation and firmware upgrade, all over one Bluetooth connection. The
+**MyCato, the web app** – a browser page with the console, a card of controls
+for every command above (name, restart, factory reset, blink, IMU, paired
+devices, sleep, mouse, keyboard and air mouse, bootloader), a live 3D view of
+the board's orientation and firmware upgrade, all over one Bluetooth
+connection. The
 controls run the same shell commands you would type, visibly in the console.
 It needs Chrome or Edge on a computer or Android; Safari, Firefox and iOS have
 no Web Bluetooth.
 
 Open <https://auli-ng.netlify.app>, click **Connect** and pick the board.
 
-The cards fill the page. Each folds away with a click on its heading, and is
-moved by dragging the grip at the left of the heading (or, with the grip
-focused, the arrow keys). The console is a drawer: the buttons in its heading
-dock it left, at the bottom or right, open it in a window of its own, or hide
-it; **Console** at the top of the page brings it back, and the bar between
-drawer and cards resizes it. The arrangement is remembered in the browser.
+If the connection drops for any reason but **Disconnect** (the board
+restarted, slept, went out of range), the app reconnects by itself as soon as
+the board is back. After a reload it also reconnects to the board it was last
+connected to, in browsers that let a page see the Bluetooth devices it was
+given before (`navigator.bluetooth.getDevices`); elsewhere, press **Connect**.
+
+The cards fill the page, folded to begin with. A click on a heading opens a
+card and closes the one that was open; the Orientation card alone opens and
+closes independently of the others. A card is moved by dragging the grip at
+the left of its heading (or, with the grip focused, the arrow keys).
+
+The console is a drawer: the buttons in its heading dock it left, at the
+bottom or right, open it in a window of its own, or hide it. **Console** at
+the top of the page brings it back, and the bar between drawer and cards
+resizes it. In a narrow window the drawer is always at the bottom. The order
+of the cards and the place and size of the drawer are remembered in the
+browser.
 
 The menu at the right end of the top row opens **Settings** (light or dark
 appearance, console text size, resetting the arrangement, forgetting USB
-drives), **Help** and **About**.
+drives), **Help** and **About**, which shows the app's version, the board's
+firmware version and the latest published one.
 
 To run it locally instead:
 
@@ -371,20 +395,35 @@ The hosted copy is the Netlify project `auli-ng`, configured by
 `/dev/ttyACM*` on Linux, a COM port on Windows) in any serial terminal, such as
 the VS Code serial terminal or `screen`.
 
-## OTA upgrade (BLE)
+## Firmware upgrade
 
-The web app's **Firmware upgrade** card says whether the board already has
-the most recent build of `main` (see [Published builds](#published-builds))
-and installs it with one button: **Upgrade over Bluetooth**, or **Upgrade
-over USB** for a new board or one that does not accept the Bluetooth upgrade.
+MyCato's **Firmware upgrade** card says whether the board already has the most
+recent build of `main` (see [Published builds](#published-builds)) and
+installs it with one button: **Upgrade over Bluetooth**, or **Upgrade over
+USB** for a new board or one that does not accept the Bluetooth upgrade.
+Settings and paired devices are kept either way, except on a legacy Cato (below).
+
+### Upgrading over Bluetooth
+
+**Upgrade over Bluetooth** sends the published build to the connected board
+and resets it. MCUboot swaps the new image in on that reset. The firmware
+confirms the image once Bluetooth is up; an image that never gets that far is
+reverted on the following reset.
+
+For your own build, upload `build/cato.zip` under **Advanced** in the same
+card, or with **nRF Connect Device Manager** (iOS/Android). The board accepts
+it only if it is signed with the key its bootloader has (see
+[Signing key](#signing-key)).
+
+Up to three devices can be connected at once, so a console session or a
+computer using the board as a mouse does not block the upgrade.
 
 ### Upgrading over USB
 
 **Upgrade over USB** does the whole upgrade from the page: it restarts the
 board into the bootloader, where it is a drive named `XIAO-SENSE` (or
-`AULI-UPDAT` on some legacy Catos), downloads
-`usb-upgrade.uf2`, and writes it onto that drive. The board installs the file
-and restarts.
+`AULI-UPDAT` on some legacy Catos), downloads `usb-upgrade.uf2`, and writes it
+onto that drive. The board installs the file and restarts.
 
 The browser makes the user grant access to each thing once, so the first
 upgrade has two choices to make; later ones need none, or at most a
@@ -409,9 +448,9 @@ A Cato running the earlier firmware ([z_cato](https://github.com/aulitech/z_cato
 is upgraded the same way. Plug it in, press **Upgrade over USB**, then
 **Legacy Cato**: the page finds it as a USB HID device (`1915:52DD`) and sends
 it its own `reboot uf2` command, which brings it back as the `XIAO-SENSE` or
-`AULI-UPDAT` drive. Once the browser has been given access to a legacy Cato, the card
-notices it whenever it is plugged in, and **Upgrade over USB** restarts it
-without asking.
+`AULI-UPDAT` drive. Once the browser has been given access to a legacy Cato,
+the card notices it whenever it is plugged in, and **Upgrade over USB**
+restarts it without asking.
 
 On its first start after such an upgrade, this firmware finds the earlier
 firmware's data where its settings belong, with none of its own in it, and
@@ -419,25 +458,11 @@ erases that area once. The board starts with default settings and no paired
 devices, so remove ("forget") the old Cato on phones and computers and pair
 again.
 
-For your own build:
-
-1. Bump the version in `VERSION` and rebuild.
-2. Upload `build/cato.zip` with the web app (**Advanced** in the Firmware
-   upgrade card, see [Connecting](#connecting)) or with **nRF Connect Device Manager**
-   (iOS/Android).
-
-Up to three devices can be connected at once, so a console session or a
-computer using the board as a mouse does not block the upgrade.
-
-MCUboot swaps the new image in on the next reset. The app confirms the image
-once Bluetooth is up; an image that never gets that far is reverted on the
-following reset.
-
 ## Published builds
 
 Every push to `main` that changes the firmware is built by GitHub Actions
 (`.github/workflows/firmware.yml`) with the project's signing key and published
-as the [`firmware-latest`](https://github.com/aulitech/xiao-nrf52840-sense-plus/releases/tag/firmware-latest)
+as the [`firmware-latest`](https://github.com/aulitech/cato2/releases/tag/firmware-latest)
 release:
 
 | File | Use |
@@ -452,6 +477,27 @@ bootloader has the project's key, that is, if it was last flashed over USB with
 a published `usb-upgrade.uf2`. A board flashed from a local build without the
 key needs that USB flash once.
 
+## Branches and versions
+
+Work is committed to `preview`, the repository's default branch, and reaches
+`main` by pull request. Firmware is built and published, and the hosted
+MyCato deployed, from `main`.
+
+The firmware and the web app have separate versions, and each changes only
+when its own files do:
+
+| | Version in | Changes with |
+| --- | --- | --- |
+| Firmware | `VERSION` | everything that goes into the build (`src`, `dts`, `sysbuild`, the configuration files) |
+| MyCato | `web/version.js` | the files under `web/` |
+
+The patch number goes up with every commit to `preview` that changes that
+part, and the minor number with every pull request to `main` (the major
+number instead, when the change calls for it). The firmware's version is what
+`firmware.json` and the Firmware upgrade card report; MyCato's is shown under
+**About** and names the cache of the installed app, so a new version replaces
+the old one's files.
+
 ## Signing key
 
 MCUboot only boots and accepts OTA images signed with the key it was built
@@ -461,13 +507,13 @@ with. To use your own key instead of the public development one, point
 ```sh
 # Once: generate a key. Keep it out of the repository and back it up.
 python3 $ZEPHYR_BASE/../bootloader/mcuboot/scripts/imgtool.py keygen \
-    -t ecdsa-p256 -k ~/.mcuboot/xiao-nrf52840-sense-plus.pem
+    -t ecdsa-p256 -k ~/.mcuboot/cato2.pem
 
-MCUBOOT_SIGNING_KEY=~/.mcuboot/xiao-nrf52840-sense-plus.pem \
+MCUBOOT_SIGNING_KEY=~/.mcuboot/cato2.pem \
     west build -p -b xiao_ble/nrf52840/sense --sysbuild
 ```
 
-A key at exactly that path, `~/.mcuboot/xiao-nrf52840-sense-plus.pem`, is used
+A key at exactly that path, `~/.mcuboot/cato2.pem`, is used
 without setting the variable, so on a machine that has the project's key every
 build is signed with it. The key is chosen when the build is configured, so use
 a fresh build directory (`-p`) when switching keys.

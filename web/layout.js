@@ -31,20 +31,40 @@ function save(layout) {
 // ------------------------------------------------------------------ Cards ---
 
 /**
- * Cards fold individually and are reordered by dragging the grip in their
- * heading (or with the arrow keys while the grip has focus).
+ * Cards start folded and open one at a time; a card marked data-independent
+ * (the orientation viewer) opens and closes on its own, beside whichever
+ * other is open. They are reordered by dragging the grip in their heading
+ * (or with the arrow keys while the grip has focus).
  */
 function initCards(layout, persist) {
 	const container = $("controls");
 	const cards = () => [...container.querySelectorAll(":scope > .card")];
-	const folded = new Set(layout.folded || container.dataset.folded.split(" "));
+	const independent = (card) => "independent" in card.dataset;
 
 	const remember = () => {
 		layout.order = cards().map((card) => card.dataset.card);
-		layout.folded = cards().filter((card) => !card.classList.contains("open"))
-			.map((card) => card.dataset.card);
 		persist();
 	};
+
+	const setOpen = (card, open) => {
+		card.classList.toggle("open", open);
+		card.querySelector(".card-head").setAttribute("aria-expanded", String(open));
+	};
+
+	const toggle = (card) => {
+		const open = !card.classList.contains("open");
+
+		if (open && !independent(card)) {
+			for (const other of cards()) {
+				if (other !== card && !independent(other)) {
+					setOpen(other, false);
+				}
+			}
+		}
+		setOpen(card, open);
+	};
+
+	delete layout.folded; // from when open cards were remembered
 
 	// Remembered order first; cards added since keep their place at the end.
 	for (const name of layout.order || []) {
@@ -65,27 +85,20 @@ function initCards(layout, persist) {
 		const title = card.querySelector("h2").textContent;
 		const grip = document.createElement("button");
 
-		const setOpen = (open) => {
-			card.classList.toggle("open", open);
-			head.setAttribute("aria-expanded", String(open));
-		};
-
-		setOpen(!folded.has(card.dataset.card));
+		setOpen(card, false);
 
 		head.setAttribute("role", "button");
 		head.setAttribute("tabindex", "0");
 		head.addEventListener("click", (event) => {
 			// Buttons in the heading act; they do not fold the card.
 			if (!event.target.closest("button")) {
-				setOpen(!card.classList.contains("open"));
-				remember();
+				toggle(card);
 			}
 		});
 		head.addEventListener("keydown", (event) => {
 			if (event.target === head && (event.key === "Enter" || event.key === " ")) {
 				event.preventDefault();
-				setOpen(!card.classList.contains("open"));
-				remember();
+				toggle(card);
 			}
 		});
 

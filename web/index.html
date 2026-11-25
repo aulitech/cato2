@@ -552,7 +552,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 </p>
 
 <div id="workspace">
-	<main id="controls" data-folded="orientation">
+	<main id="controls">
 		<section class="card" data-card="device">
 			<div class="card-head">
 				<h2>Board</h2>
@@ -812,7 +812,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 			</div>
 		</section>
 
-		<section class="card" data-card="orientation">
+		<section class="card" data-card="orientation" data-independent>
 			<div class="card-head">
 				<h2>Orientation</h2>
 				<span id="orientation-rate" class="note"></span>
@@ -1002,18 +1002,20 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 		<div>
 			<h3>Connecting</h3>
 			<p>Press <strong>Connect</strong> and pick the board from the browser's list. The first time, the computer asks to pair with it. This needs Chrome or Edge, on a computer or Android.</p>
+			<p>If the connection drops, because the board restarted, slept or went out of range, the app reconnects by itself as soon as the board is back. Press <strong>Stop</strong> to give up, or <strong>Disconnect</strong> to end a connection for good.</p>
+			<p>After the page is reloaded, press <strong>Connect</strong> again. Some browsers let the app find the board it last used, and it then reconnects without being asked.</p>
 		</div>
 		<div>
 			<h3>If the board is not listed, or will not pair</h3>
 			<ul>
 				<li>Check that it has power and is not asleep: press its reset button once.</li>
 				<li>A board accepts new devices only while pairing is allowed. On a device already paired with it, switch on <strong>Allow new devices to pair</strong> under Paired devices.</li>
-				<li>If pairing keeps failing, remove the board from the computer's Bluetooth settings and connect again.</li>
+				<li>If pairing keeps failing, or the board was reset to factory defaults, remove ("forget") the board in the computer's Bluetooth settings and connect again.</li>
 			</ul>
 		</div>
 		<div>
 			<h3>Cards</h3>
-			<p>Each card controls one part of the board. Click a heading to fold a card away; drag the dots at the left of the heading to move it. Changes made on a card are sent to the board as the same commands you could type in the console.</p>
+			<p>Each card controls one part of the board. Click a heading to open a card, which closes the one that was open (the Orientation card stays as it is); drag the dots at the left of the heading to move it. Changes made on a card are sent to the board as the same commands you could type in the console.</p>
 		</div>
 		<div>
 			<h3>Console</h3>
@@ -1021,9 +1023,19 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 		</div>
 		<div>
 			<h3>Upgrading the firmware</h3>
-			<p>The Firmware upgrade card says whether the board is up to date. <strong>Upgrade over Bluetooth</strong> works on a connected board. <strong>Upgrade over USB</strong> works on any board plugged into this computer, including a legacy Cato; if the board does not restart by itself, double-tap its reset button.</p>
+			<p>The Firmware upgrade card says whether the board is up to date. Settings and paired devices are kept.</p>
+			<ul>
+				<li><strong>Upgrade over Bluetooth</strong> works on a connected board.</li>
+				<li><strong>Upgrade over USB</strong> works on any board plugged into this computer, including a legacy Cato. The first time, the browser asks you to pick the board, and then its drive, named XIAO-SENSE or AULI-UPDAT. After that one press does it all.</li>
+				<li>If the board does not switch to its drive by itself, double-tap its reset button.</li>
+				<li>A legacy Cato starts afresh after its upgrade: forget it in the computer's Bluetooth settings and pair again.</li>
+			</ul>
 		</div>
-		<p>More in the <a href="https://github.com/aulitech/xiao-nrf52840-sense-plus#readme" target="_blank" rel="noopener">project's documentation</a>.</p>
+		<div>
+			<h3>Settings</h3>
+			<p>The menu at the end of the top row has the app's own settings: light or dark appearance, the console's text size, putting the cards and console back where they started, and forgetting the USB drives chosen for upgrades.</p>
+		</div>
+		<p>More in the <a href="https://github.com/aulitech/cato2#readme" target="_blank" rel="noopener">project's documentation</a>.</p>
 	</div>
 </dialog>
 
@@ -1033,7 +1045,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 		<p>MyCato sets up, controls and upgrades a Cato: a Seeed Studio XIAO nRF52840 Sense Plus running the Cato firmware. It talks to the board directly from this browser, over Bluetooth or USB.</p>
 		<dl id="about-facts"></dl>
 		<p>
-			<a href="https://github.com/aulitech/xiao-nrf52840-sense-plus" target="_blank" rel="noopener">Source code</a>,
+			<a href="https://github.com/aulitech/cato2" target="_blank" rel="noopener">Source code</a>,
 			under the MIT licence.
 		</p>
 	</div>

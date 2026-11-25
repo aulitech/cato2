@@ -74,7 +74,9 @@ const state = {
 	images: [], // what the board last reported
 	legacyOnUsb: false, // a legacy Cato this page knows is plugged in
 	busy: false, // an upgrade is running
-	expectDisconnect: false,
+	expectDisconnect: false, // a Bluetooth upgrade is resetting the board
+	userDisconnect: false, // the user pressed Disconnect
+	reconnect: null, // the token of the reconnection under way
 };
 
 const assembler = new smp.PacketAssembler();
@@ -240,21 +242,108 @@ async function openServices() {
 	state.writeSize = LARGE_WRITE;
 }
 
+// The board the user last connected to is remembered by the id the browser
+// gives it, so that a reload can pick it up again without asking.
+const DEVICE_KEY = "cato-device";
+const RECONNECT_EVERY_MS = 2000;
+
+function rememberDevice(id) {
+	try {
+		if (id) {
+			localStorage.setItem(DEVICE_KEY, id);
+		} else {
+			localStorage.removeItem(DEVICE_KEY);
+		}
+	} catch {
+		// Not remembered, then.
+	}
+}
+
+function useDevice(device) {
+	if (state.device && state.device !== device) {
+		state.device.removeEventListener("gattserverdisconnected", onDisconnected);
+	}
+	state.device = device;
+	device.addEventListener("gattserverdisconnected", onDisconnected);
+}
+
 async function connect() {
 	const device = await navigator.bluetooth.requestDevice({
 		filters: [{ services: [NUS_SERVICE] }, { namePrefix: "XIAO" }],
 		optionalServices: [NUS_SERVICE, SMP_SERVICE, ORIENTATION_SERVICE],
 	});
 
-	if (state.device && state.device !== device) {
-		state.device.removeEventListener("gattserverdisconnected", onDisconnected);
-	}
-	state.device = device;
-	device.addEventListener("gattserverdisconnected", onDisconnected);
-
+	useDevice(device);
 	setStatus("connecting", "Connecting…");
 	await openServices();
+	rememberDevice(device.id);
 	onConnected();
+}
+
+/**
+ * Keeps trying to connect to the current device until it works or the user
+ * stops it. Used when the link drops by itself (the board restarted, slept,
+ * went out of range) and for the remembered board after a reload.
+ */
+async function reconnect() {
+	const device = state.device;
+	const attempt = {};
+
+	state.reconnect = attempt;
+	setStatus("connecting", "Reconnecting…");
+	updateControls();
+
+	while (state.reconnect === attempt) {
+		try {
+			await openServices();
+		} catch {
+			// Not back yet, or only half connected: start over shortly.
+			if (state.reconnect === attempt && device.gatt.connected) {
+				device.gatt.disconnect();
+			}
+			await sleep(RECONNECT_EVERY_MS);
+			continue;
+		}
+		if (state.reconnect !== attempt) {
+			// Stopped while the connection was being made.
+			device.gatt.disconnect();
+			return;
+		}
+		state.reconnect = null;
+		rememberDevice(device.id);
+		onConnected();
+	}
+}
+
+function stopReconnecting() {
+	state.reconnect = null;
+	rememberDevice(null);
+	state.device?.gatt.disconnect();
+	setStatus("disconnected", "Disconnected");
+	updateControls();
+}
+
+// After a reload: the browser still holds the permission for the board (where
+// it lets a page ask, see getDevices), so connect to it again without asking.
+async function restoreConnection() {
+	let id = null;
+
+	try {
+		id = localStorage.getItem(DEVICE_KEY);
+	} catch {
+		// Nothing remembered.
+	}
+	if (!id || !BLUETOOTH || !navigator.bluetooth.getDevices) {
+		return;
+	}
+
+	const device = (await navigator.bluetooth.getDevices().catch(() => []))
+		.find((known) => known.id === id);
+
+	if (device && !state.device) {
+		useDevice(device);
+		reconnect();
+	}
 }
 
 function onConnected() {
@@ -270,6 +359,10 @@ function onConnected() {
 }
 
 function onDisconnected() {
+	const wasConnected = Boolean(state.nusRx);
+	const byUser = state.userDisconnect;
+
+	state.userDisconnect = false;
 	orientation.setSource(null);
 	queueMicrotask(showFirmwareStatus);
 	state.nusRx = null;
@@ -280,12 +373,25 @@ function onDisconnected() {
 		state.pending.reject(new Error("Disconnected"));
 		state.pending = null;
 	}
+	if (state.reconnect) {
+		// A failed attempt at reconnecting: the loop carries on.
+		return;
+	}
 	setStatus("disconnected", state.expectDisconnect ? "Rebooting…" : "Disconnected");
-	termNote("disconnected");
+	if (wasConnected) {
+		termNote("disconnected");
+	}
 	updateControls();
+	// Not asked for, and not the reset of a Bluetooth upgrade, which waits for
+	// the board itself: get the connection back.
+	if (wasConnected && !byUser && !state.expectDisconnect) {
+		reconnect();
+	}
 }
 
 function disconnect() {
+	state.userDisconnect = true;
+	rememberDevice(null);
 	state.device?.gatt.disconnect();
 }
 
@@ -446,7 +552,7 @@ async function chooseFile() {
 // of main twice: on the "firmware" branch, which this page can read from
 // another origin, and as a release, which gives a proper file download.
 // firmware.json describes the build.
-const REPO = "aulitech/xiao-nrf52840-sense-plus";
+const REPO = "aulitech/cato2";
 const FIRMWARE_DIR = `https://raw.githubusercontent.com/${REPO}/firmware/`;
 const RELEASE_DIR = `https://github.com/${REPO}/releases/download/firmware-latest/`;
 
@@ -662,7 +768,8 @@ function setStatus(kind, text) {
 function updateControls() {
 	const connected = Boolean(state.smpChar);
 
-	ui.connect.textContent = connected ? "Disconnect" : "Connect";
+	ui.connect.textContent = connected ? "Disconnect" : state.reconnect ? "Stop" : "Connect";
+	ui.connect.title = state.reconnect ? "Stop trying to reconnect" : "";
 	ui.connect.disabled = state.busy;
 	ui.refresh.disabled = !connected || state.busy;
 	ui.file.disabled = state.busy;
@@ -683,6 +790,10 @@ function updateControls() {
 ui.connect.addEventListener("click", async () => {
 	if (state.smpChar) {
 		disconnect();
+		return;
+	}
+	if (state.reconnect) {
+		stopReconnecting();
 		return;
 	}
 	try {
@@ -979,3 +1090,4 @@ if (!BLUETOOTH) {
 }
 setStatus("disconnected", "Disconnected");
 loadLatest();
+restoreConnection();
