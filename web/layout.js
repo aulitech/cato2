@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Page layout: the cards are the page, and the user arranges them; the console
+// Page layout: the sections are tabs, which the user puts in order; the console
 // lives in a drawer that docks to the left, right or bottom of the window, or
 // pops out into a window of its own. Everything chosen is remembered.
 
@@ -28,119 +28,137 @@ function save(layout) {
 	}
 }
 
-// ------------------------------------------------------------------ Cards ---
+// ------------------------------------------------------------------- Tabs ---
+
+const DRAG_START = 6; // pixels a tab moves before it is being dragged, not clicked
 
 /**
- * Cards start folded and open one at a time; a card marked data-independent
- * (the orientation viewer) opens and closes on its own, beside whichever
- * other is open. They are reordered by dragging the grip in their heading
- * (or with the arrow keys while the grip has focus).
+ * The page's sections ("cards" in the markup and the other modules) are laid
+ * out as tabs: one shows at a time, chosen from a row of tabs that the user
+ * can put in order by dragging. A section marked data-locked (the orientation
+ * viewer) is not a tab: it stays in the top left corner, beside the tabs, and
+ * folds away by its heading.
+ *
+ * The section showing has the class "open", which is what the other modules
+ * look at to know whether theirs is in view.
  */
-function initCards(layout, persist) {
+function initTabs(layout, persist) {
 	const container = $("controls");
-	const cards = () => [...container.querySelectorAll(":scope > .card")];
-	const independent = (card) => "independent" in card.dataset;
-
-	const remember = () => {
-		layout.order = cards().map((card) => card.dataset.card);
-		persist();
-	};
+	const sections = [...container.querySelectorAll(":scope > .card")];
+	const tabbed = document.createElement("div");
+	const tablist = document.createElement("div");
+	const panels = document.createElement("div");
+	const tabs = new Map(); // section name -> its tab
 
 	const setOpen = (card, open) => {
 		card.classList.toggle("open", open);
 		card.querySelector(".card-head").setAttribute("aria-expanded", String(open));
 	};
 
-	const toggle = (card) => {
-		const open = !card.classList.contains("open");
+	tabbed.id = "tabbed";
+	tablist.id = "tabs";
+	tablist.setAttribute("role", "tablist");
+	tablist.setAttribute("aria-label", "Sections");
+	panels.id = "panels";
+	tabbed.append(tablist, panels);
+	container.append(tabbed);
 
-		if (open && !independent(card)) {
-			for (const other of cards()) {
-				if (other !== card && !independent(other)) {
-					setOpen(other, false);
-				}
-			}
-		}
-		setOpen(card, open);
+	const remember = () => {
+		layout.order = [...tablist.children].map((tab) => tab.dataset.tab);
+		persist();
 	};
 
-	delete layout.folded; // from when open cards were remembered
+	function select(name, focus = false) {
+		for (const [other, tab] of tabs) {
+			const selected = other === name;
 
-	// Remembered order first; cards added since keep their place at the end.
-	for (const name of layout.order || []) {
-		const card = container.querySelector(`:scope > [data-card="${name}"]`);
-
-		if (card) {
-			container.append(card);
+			tab.setAttribute("aria-selected", String(selected));
+			tab.tabIndex = selected ? 0 : -1;
+			$(`panel-${other}`).classList.toggle("open", selected);
+			if (selected && focus) {
+				tab.focus();
+			}
 		}
-	}
-	for (const card of cards()) {
-		if (!(layout.order || []).includes(card.dataset.card) && layout.order) {
-			container.append(card);
-		}
+		layout.tab = name;
+		persist();
 	}
 
-	for (const card of cards()) {
+	for (const card of sections) {
+		const name = card.dataset.card;
 		const head = card.querySelector(".card-head");
-		const title = card.querySelector("h2").textContent;
-		const grip = document.createElement("button");
 
-		setOpen(card, false);
+		if ("locked" in card.dataset) {
+			// Not a tab: folds by its heading, closed to begin with.
+			const toggle = () => setOpen(card, !card.classList.contains("open"));
 
-		head.setAttribute("role", "button");
-		head.setAttribute("tabindex", "0");
-		head.addEventListener("click", (event) => {
-			// Buttons in the heading act; they do not fold the card.
-			if (!event.target.closest("button")) {
-				toggle(card);
-			}
-		});
-		head.addEventListener("keydown", (event) => {
-			if (event.target === head && (event.key === "Enter" || event.key === " ")) {
-				event.preventDefault();
-				toggle(card);
-			}
-		});
+			setOpen(card, false);
+			head.setAttribute("role", "button");
+			head.setAttribute("tabindex", "0");
+			head.addEventListener("click", (event) => {
+				if (!event.target.closest("button")) {
+					toggle();
+				}
+			});
+			head.addEventListener("keydown", (event) => {
+				if (event.target === head && (event.key === "Enter" || event.key === " ")) {
+					event.preventDefault();
+					toggle();
+				}
+			});
+			continue;
+		}
 
-		grip.className = "card-grip";
-		grip.type = "button";
-		grip.title = "Drag to move this card";
-		grip.setAttribute("aria-label", `Move the ${title} card: drag, or use the arrow keys`);
-		head.prepend(grip);
+		const tab = document.createElement("button");
 
-		grip.addEventListener("keydown", (event) => {
-			const earlier = event.key === "ArrowUp" || event.key === "ArrowLeft";
-			const later = event.key === "ArrowDown" || event.key === "ArrowRight";
+		tab.type = "button";
+		tab.id = `tab-${name}`;
+		tab.dataset.tab = name;
+		tab.textContent = card.querySelector("h2").textContent;
+		tab.setAttribute("role", "tab");
+		tab.setAttribute("aria-controls", `panel-${name}`);
+		tab.title = "Drag to move this tab";
+		card.id = `panel-${name}`;
+		card.setAttribute("role", "tabpanel");
+		card.setAttribute("aria-labelledby", tab.id);
+		panels.append(card);
+		tabs.set(name, tab);
 
-			if (!earlier && !later) {
+		tab.addEventListener("keydown", (event) => {
+			const all = [...tablist.children];
+			const at = all.indexOf(tab);
+			const to = {
+				ArrowLeft: at - 1,
+				ArrowRight: at + 1,
+				Home: 0,
+				End: all.length - 1,
+			}[event.key];
+
+			if (to === undefined) {
 				return;
 			}
 			event.preventDefault();
-
-			const other = earlier ? card.previousElementSibling : card.nextElementSibling;
-
-			if (other) {
-				other[earlier ? "before" : "after"](card);
-				grip.focus();
-				remember();
-			}
+			select(all[(to + all.length) % all.length].dataset.tab, true);
 		});
 
-		// The card stays in the page while dragged and trades places with
-		// whichever card the pointer is over.
-		let passed = null; // the card last traded with, until the pointer leaves it
+		// A press that moves is a drag: the tab trades places with whichever
+		// tab the pointer is over. One that does not is a click, and selects.
+		let start = null;
+		let dragging = false;
+		let passed = null; // the tab last traded with, until the pointer leaves it
 
 		const onMove = (event) => {
-			const over = document.elementFromPoint(event.clientX, event.clientY)
-				?.closest("#controls > .card");
-			const box = container.getBoundingClientRect();
-
-			if (event.clientY < box.top + 40) {
-				container.scrollBy(0, -12);
-			} else if (event.clientY > box.bottom - 40) {
-				container.scrollBy(0, 12);
+			if (!dragging) {
+				if (Math.hypot(event.clientX - start.x, event.clientY - start.y) < DRAG_START) {
+					return;
+				}
+				dragging = true;
+				tab.classList.add("dragging");
 			}
-			if (!over || over === card) {
+
+			const over = document.elementFromPoint(event.clientX, event.clientY)
+				?.closest("#tabs > [role=tab]");
+
+			if (!over || over === tab) {
 				passed = null;
 				return;
 			}
@@ -148,34 +166,62 @@ function initCards(layout, persist) {
 				return;
 			}
 
-			const all = cards();
+			const all = [...tablist.children];
 
-			over[all.indexOf(over) > all.indexOf(card) ? "after" : "before"](card);
+			over[all.indexOf(over) > all.indexOf(tab) ? "after" : "before"](tab);
 			passed = over;
 		};
 
-		// Listened for on the window: moving the card in the page would end
-		// a pointer capture held by its grip.
-		const drop = () => {
-			card.classList.remove("dragging");
+		// Listened for on the window: moving the tab in the page would end a
+		// pointer capture it held.
+		const onUp = () => {
 			window.removeEventListener("pointermove", onMove);
-			window.removeEventListener("pointerup", drop);
-			window.removeEventListener("pointercancel", drop);
-			remember();
+			window.removeEventListener("pointerup", onUp);
+			window.removeEventListener("pointercancel", onUp);
+			tab.classList.remove("dragging");
+			if (dragging) {
+				remember();
+			} else {
+				select(name);
+			}
+			dragging = false;
 		};
 
-		grip.addEventListener("pointerdown", (event) => {
+		tab.addEventListener("pointerdown", (event) => {
 			if (event.button !== 0) {
 				return;
 			}
-			event.preventDefault();
-			card.classList.add("dragging");
+			start = { x: event.clientX, y: event.clientY };
 			passed = null;
 			window.addEventListener("pointermove", onMove);
-			window.addEventListener("pointerup", drop);
-			window.addEventListener("pointercancel", drop);
+			window.addEventListener("pointerup", onUp);
+			window.addEventListener("pointercancel", onUp);
+		});
+		// From the keyboard, and from anything else that clicks without a pointer.
+		tab.addEventListener("click", (event) => {
+			if (event.detail === 0) {
+				select(name);
+			}
 		});
 	}
+
+	// Remembered order first; tabs added since then follow in their own.
+	const order = (layout.order || []).filter((name) => tabs.has(name));
+
+	for (const name of [...order, ...[...tabs.keys()].filter((name) => !order.includes(name))]) {
+		tablist.append(tabs.get(name));
+	}
+	delete layout.folded; // from when sections were cards that folded
+
+	select(tabs.has(layout.tab) ? layout.tab : tablist.firstElementChild.dataset.tab);
+
+	// News on a tab that is not showing would go unseen: a firmware upgrade on
+	// offer puts a dot on its tab.
+	const badge = $("firmware-badge");
+
+	new MutationObserver(() => {
+		tabs.get("firmware").classList.toggle("flagged", /available|found/i.test(badge.textContent));
+	}).observe(badge, { childList: true, characterData: true, subtree: true });
 }
 
 // ---------------------------------------------------------------- Console ---
@@ -203,7 +249,7 @@ export function initLayout({ term, sendInput }) {
 	}
 	layout.open = layout.open !== false;
 
-	initCards(layout, persist);
+	initTabs(layout, persist);
 
 	const poppedOut = () => Boolean(popup && !popup.closed);
 

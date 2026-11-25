@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 //
-// Orientation viewer: draws the board as a 3D slab that turns with the real
-// one. The board notifies its fused orientation as a quaternion 50 times a
+// Orientation viewer: draws the Cato in 3D, turning with the real one (its
+// case from an STL model, see model.js; a plain slab if that cannot be drawn). The board notifies its fused orientation as a quaternion 50 times a
 // second (see "orientation stream" in src/hid.c); it is only asked to while
 // the viewer's card is open.
 //
 // Around the board is a screen: where the board believes the screen it points
 // at to be, which the pointer (air mouse) needs to know. The user moves it to
 // the side of the board the real screen is on.
+
+import { createModelView, parseStl } from "./model.js";
 
 export const ORIENTATION_SERVICE = "7c3b0001-5f1e-4c8a-9d2e-3a6b8f1c2d4e";
 export const ORIENTATION_VALUE = "7c3b0002-5f1e-4c8a-9d2e-3a6b8f1c2d4e";
@@ -69,12 +71,16 @@ export function eulerDegrees(q) {
  * towards the viewer; the room is drawn with X right, Y into the screen and Z
  * up, so the matrix is the rotation with its Y and Z axes swapped and negated.
  */
-export function cssMatrix(r) {
-	const m = [
+export function cssAxes(r) {
+	return [
 		[r[0][0], -r[0][2], -r[0][1]],
 		[-r[2][0], r[2][2], r[2][1]],
 		[-r[1][0], r[1][2], r[1][1]],
 	];
+}
+
+export function cssMatrix(r) {
+	const m = cssAxes(r);
 
 	// matrix3d() takes its values column by column.
 	return `matrix3d(${m[0][0]},${m[1][0]},${m[2][0]},0,` +
@@ -100,17 +106,30 @@ export function cssFacingViewer(r, cameraTilt) {
 }
 
 const CAMERA_TILT = -24; // degrees, as in the stylesheet
+const PERSPECTIVE = 700; // pixels, as in the stylesheet
+
+/** The scene's axes as the tilted camera sees them: CSS rotateX(CAMERA_TILT). */
+function tilted(m) {
+	const c = Math.cos(CAMERA_TILT * Math.PI / 180);
+	const s = Math.sin(CAMERA_TILT * Math.PI / 180);
+
+	return [
+		m[0],
+		m[1].map((value, i) => c * value - s * m[2][i]),
+		m[1].map((value, i) => s * value + c * m[2][i]),
+	];
+}
 const IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 
 // Where the screen is drawn for each board axis that can point at it, in the
 // model's own space (X right, Y down, Z towards the viewer; see cssMatrix).
 const SCREEN_SPOTS = {
-	"+x": [115, 0, 0],
-	"-x": [-115, 0, 0],
-	"+y": [0, 0, -95],
-	"-y": [0, 0, 95],
-	"+z": [0, -60, 0],
-	"-z": [0, 60, 0],
+	"+x": [120, 0, 0],
+	"-x": [-120, 0, 0],
+	"+y": [0, 0, -115],
+	"-y": [0, 0, 115],
+	"+z": [0, -70, 0],
+	"-z": [0, 70, 0],
 };
 
 /**
@@ -132,6 +151,26 @@ export function initOrientation({ setForward }) {
 	let countSince = performance.now();
 	let forward = null; // the axis pointing at the screen, once the board has said
 	const spots = {};
+
+	// The case, drawn on a canvas under the screen and its dots. Until (and
+	// unless) it is there, the slab of plain faces stands in.
+	const scene = $("orientation-scene");
+	const view = createModelView($("orientation-canvas"), { perspective: PERSPECTIVE });
+	let shown = IDENTITY;
+
+	if (view) {
+		view.setColours([0.88, 0.89, 0.9], [0.42, 0.44, 0.46]);
+		fetch("cato.stl")
+			.then((response) => (response.ok
+				? response.arrayBuffer()
+				: Promise.reject(new Error(`cato.stl: ${response.status}`))))
+			.then((buffer) => {
+				view.setGeometry(parseStl(buffer));
+				view.draw(tilted(cssAxes(shown)));
+				scene.classList.add("has-model");
+			})
+			.catch((err) => console.warn("No 3D model, drawing a slab:", err.message));
+	}
 
 	function placeSpots(rotation) {
 		const facing = cssFacingViewer(rotation, CAMERA_TILT);
@@ -197,6 +236,10 @@ export function initOrientation({ setForward }) {
 
 		model.style.transform = cssMatrix(rotation);
 		placeSpots(rotation);
+		shown = rotation;
+		if (view) {
+			view.draw(tilted(cssAxes(rotation)));
+		}
 		$("orientation-roll").textContent = `${roll.toFixed(0)}°`;
 		$("orientation-pitch").textContent = `${pitch.toFixed(0)}°`;
 		$("orientation-yaw").textContent = `${yaw.toFixed(0)}°`;

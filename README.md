@@ -363,7 +363,7 @@ python tools/console.py
 It connects to the first board it finds; pass a name
 (`python tools/console.py "My Board"`) to pick one.
 
-**MyCato, the web app** – a browser page with the console, a card of controls
+**MyCato, the web app** – a browser page with the console, a tab of controls
 for every command above (name, restart, factory reset, blink, IMU, paired
 devices, sleep, mouse and pointer, keyboard, bootloader), a live 3D view of
 the board's orientation and firmware upgrade, all over one Bluetooth
@@ -380,17 +380,18 @@ the board is back. After a reload it also reconnects to the board it was last
 connected to, in browsers that let a page see the Bluetooth devices it was
 given before (`navigator.bluetooth.getDevices`); elsewhere, press **Connect**.
 
-The cards fill the page, folded to begin with. A click on a heading opens a
-card and closes the one that was open; the Orientation card alone opens and
-closes independently of the others. A card is moved by dragging the grip at
-the left of its heading (or, with the grip focused, the arrow keys).
+The page is laid out as tabs, one for each part of the board (General, Blink,
+IMU, Paired devices, Sleep, Mouse and keyboard, Firmware upgrade). One shows
+at a time, and dragging a tab sideways changes the order. The Orientation
+view is not a tab: it stays in the top left corner, beside the tabs, and
+opens and closes by its heading.
 
 The console is a drawer: the buttons in its heading dock it left, at the
 bottom or right, open it in a window of its own, or hide it. **Console** at
-the top of the page brings it back, and the bar between drawer and cards
+the top of the page brings it back, and the bar between drawer and tabs
 resizes it. In a narrow window the drawer is always at the bottom. The order
-of the cards and the place and size of the drawer are remembered in the
-browser.
+of the tabs, the tab showing and the place and size of the drawer are
+remembered in the browser.
 
 The menu at the right end of the top row opens **Settings** (light or dark
 appearance, console text size, resetting the arrangement, forgetting USB
