@@ -333,7 +333,40 @@ export function parseImageHeader(image) {
 	return {
 		version: `${major}.${minor}.${revision}` + (build ? `+${build}` : ""),
 		size: image.length,
+		hash: imageHash(image, view),
 	};
+}
+
+/**
+ * The image's SHA-256, which is how the board identifies an image. It is in
+ * the list of tagged values that follows the code. Null if it is not found.
+ */
+function imageHash(image, view) {
+	const TLV_INFO = 0x6907;
+	const TLV_PROTECTED_INFO = 0x6908;
+	const TLV_SHA256 = 0x10;
+	let offset = view.getUint16(8, true) + view.getUint32(12, true);
+
+	if (offset + 4 <= image.length && view.getUint16(offset, true) === TLV_PROTECTED_INFO) {
+		offset += view.getUint16(offset + 2, true);
+	}
+	if (offset + 4 > image.length || view.getUint16(offset, true) !== TLV_INFO) {
+		return null;
+	}
+
+	const end = Math.min(image.length, offset + view.getUint16(offset + 2, true));
+
+	offset += 4;
+	while (offset + 4 <= end) {
+		const type = view.getUint16(offset, true);
+		const length = view.getUint16(offset + 2, true);
+
+		if (type === TLV_SHA256 && offset + 4 + length <= end) {
+			return image.slice(offset + 4, offset + 4 + length);
+		}
+		offset += 4 + length;
+	}
+	return null;
 }
 
 async function inflateRaw(data) {

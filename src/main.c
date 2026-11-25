@@ -286,6 +286,32 @@ SHELL_CMD_REGISTER(bootloader, NULL,
 		   "Reset into the UF2 bootloader (USB drive) for flashing over USB",
 		   cmd_bootloader);
 
+/* Settings subtrees that belong to the application; "bt" is Bluetooth's. */
+static const char *const own_subtrees[] = { "app", "blink", "imu", "hid" };
+
+/* Written to GPREGRET2 across the restart that follows erasing foreign storage. */
+#define STORAGE_ERASED_MAGIC 0xA5
+
+static int count_setting(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg,
+			 void *param)
+{
+	(*(int *)param)++;
+	return 0;
+}
+
+/* Erases the whole settings partition. */
+static int erase_storage(void)
+{
+	const struct flash_area *storage;
+	int err = flash_area_open(PARTITION_ID(storage_partition), &storage);
+
+	if (!err) {
+		err = flash_area_flatten(storage, 0, storage->fa_size);
+		flash_area_close(storage);
+	}
+	return err;
+}
+
 static int cmd_reboot(const struct shell *sh, size_t argc, char **argv)
 {
 	shell_print(sh, "Restarting...");
@@ -306,7 +332,6 @@ SHELL_CMD_REGISTER(reboot, NULL, "Restart the board", cmd_reboot);
  */
 static int cmd_factory_reset(const struct shell *sh, size_t argc, char **argv)
 {
-	const struct flash_area *storage;
 	int err;
 
 	if (argc != 2 || strcmp(argv[1], "confirm") != 0) {
@@ -318,11 +343,7 @@ static int cmd_factory_reset(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "Erasing all settings and paired devices, then restarting...");
 	k_msleep(500);
 
-	err = flash_area_open(PARTITION_ID(storage_partition), &storage);
-	if (!err) {
-		err = flash_area_flatten(storage, 0, storage->fa_size);
-		flash_area_close(storage);
-	}
+	err = erase_storage();
 	if (err) {
 		shell_error(sh, "Could not erase the settings (err %d)", err);
 		return err;
@@ -340,6 +361,8 @@ SHELL_CMD_ARG_REGISTER(factory_reset, NULL,
 int main(void)
 {
 	uint32_t reset_cause;
+	int own_settings = 0;
+	bool fresh;
 	int err;
 
 	LOG_INF("XIAO nRF52840 Sense Plus, firmware %s", APP_VERSION_STRING);
@@ -351,16 +374,38 @@ int main(void)
 	 */
 	err = settings_subsys_init();
 	if (!err) {
-		err = settings_load_subtree("app");
+		for (size_t i = 0; i < ARRAY_SIZE(own_subtrees); i++) {
+			(void)settings_load_subtree_direct(own_subtrees[i], count_setting,
+							   &own_settings);
+		}
 	}
-	if (!err) {
-		err = settings_load_subtree("blink");
+
+	/*
+	 * A board that ran other firmware before, such as a legacy Cato, has
+	 * that firmware's data where the settings live: unreadable, or readable
+	 * but not ours, with Bluetooth bonds and a name that are not this
+	 * firmware's. Either way none of this firmware's own settings are in
+	 * it, so it is erased, once, and the board restarts with a clean slate.
+	 * The marker in a retained register stops that from repeating.
+	 */
+	fresh = nrf_power_gpregret_get(NRF_POWER, 1) == STORAGE_ERASED_MAGIC;
+	nrf_power_gpregret_set(NRF_POWER, 1, 0);
+	if ((err || own_settings == 0) && !fresh) {
+		LOG_WRN("No settings of this firmware in storage: erasing it");
+		if (erase_storage() == 0) {
+			nrf_power_gpregret_set(NRF_POWER, 1, STORAGE_ERASED_MAGIC);
+			sys_reboot(SYS_REBOOT_COLD);
+		}
 	}
-	if (!err) {
-		err = settings_load_subtree("imu");
+	if (!err && own_settings == 0) {
+		/* From now on the storage is recognisably this firmware's. */
+		uint8_t owner = 1;
+
+		(void)settings_save_one("app/owner", &owner, sizeof(owner));
 	}
-	if (!err) {
-		err = settings_load_subtree("hid");
+
+	for (size_t i = 0; !err && i < ARRAY_SIZE(own_subtrees); i++) {
+		err = settings_load_subtree(own_subtrees[i]);
 	}
 	if (err) {
 		LOG_ERR("Could not load settings, using defaults (err %d)", err);

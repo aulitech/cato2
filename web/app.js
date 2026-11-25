@@ -7,6 +7,7 @@ import { initControls } from "./controls.js";
 import { initOrientation, ORIENTATION_SERVICE, ORIENTATION_VALUE } from "./orientation.js";
 import { ShellRunner } from "./shell.js";
 import * as smp from "./smp.js";
+import * as usb from "./usb.js";
 
 const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // browser -> board
@@ -24,6 +25,9 @@ const REBOOT_TIMEOUT_MS = 120000;
 
 const $ = (id) => document.getElementById(id);
 
+// Web Bluetooth is missing in Safari, Firefox and every browser on iOS.
+const BLUETOOTH = Boolean(navigator.bluetooth);
+
 const ui = {
 	unsupported: $("unsupported"),
 	connect: $("connect"),
@@ -36,10 +40,18 @@ const ui = {
 	file: $("file"),
 	fileInfo: $("file-info"),
 	upload: $("upload"),
-	latest: $("latest"),
-	latestInfo: $("latest-info"),
-	latestUse: $("latest-use"),
-	latestUf2: $("latest-uf2"),
+	firmwareBadge: $("firmware-badge"),
+	firmwareStatus: $("firmware-status"),
+	firmwareLatest: $("firmware-latest"),
+	upgradeBle: $("upgrade-ble"),
+	upgradeUsb: $("upgrade-usb"),
+	usbSteps: $("usb-steps"),
+	usbDownload: $("usb-download"),
+	usbBootloader: $("usb-bootloader"),
+	usbFindLegacy: $("usb-find-legacy"),
+	usbFind: $("usb-find"),
+	usbResult: $("usb-result"),
+	upgradeProgress: $("upgrade-progress"),
 	progress: $("progress"),
 	progressText: $("progress-text"),
 	log: $("log"),
@@ -52,7 +64,11 @@ const state = {
 	writeSize: LARGE_WRITE,
 	seq: 0,
 	pending: null, // { seq, resolve, reject, timer }
-	firmware: null,
+	firmware: null, // a file chosen under Advanced
+	latest: null, // the published build: { info, firmware }, see loadLatest()
+	latestFailed: false,
+	images: [], // what the board last reported
+	legacyOnUsb: false, // a legacy Cato this page knows is plugged in
 	busy: false, // an upgrade is running
 	expectDisconnect: false,
 };
@@ -213,6 +229,7 @@ function onConnected() {
 
 function onDisconnected() {
 	orientation.setSource(null);
+	queueMicrotask(showFirmwareStatus);
 	state.nusRx = null;
 	state.smpChar = null;
 	shell.reset();
@@ -347,7 +364,9 @@ function renderSlots(images) {
 async function refreshSlots() {
 	const images = await readSlots();
 
+	state.images = images;
 	renderSlots(images);
+	showFirmwareStatus();
 	return images;
 }
 
@@ -398,32 +417,71 @@ async function fetchFirmwareFile(name) {
 	return response;
 }
 
-async function showLatestFirmware() {
-	let latest;
-
+// Fetches the published build once: its description, and the Bluetooth
+// upgrade package, which also tells whether the board already runs it.
+async function loadLatest() {
 	try {
-		latest = await (await fetchFirmwareFile("firmware.json")).json();
+		const info = await (await fetchFirmwareFile("firmware.json")).json();
+
+		if (!info.dfu || !info.usb) {
+			throw new Error("Incomplete firmware description");
+		}
+
+		const bytes = new Uint8Array(await (await fetchFirmwareFile(info.dfu)).arrayBuffer());
+
+		state.latest = { info, firmware: await smp.loadFirmware(info.dfu, bytes) };
+		ui.usbDownload.href = RELEASE_DIR + info.usb;
 	} catch {
-		return; // none published: only the file picker is offered
+		state.latestFailed = true;
 	}
-	if (!latest.dfu || !latest.usb) {
-		return;
+	showFirmwareStatus();
+	updateControls();
+}
+
+/** One line on where the board stands against the latest build. */
+function showFirmwareStatus() {
+	const latest = state.latest;
+	const running = state.smpChar ? state.images.find((image) => image.slot === 0) : null;
+	let text;
+	let kind = "";
+	let badge = "";
+
+	if (!latest) {
+		text = state.latestFailed
+			? "The latest firmware could not be downloaded. Check the internet connection and reload."
+			: "Checking for the latest firmware…";
+	} else if (state.legacyOnUsb && !running) {
+		text = "A legacy Cato is connected by USB. Upgrade it over USB.";
+		kind = "update";
+		badge = "Legacy Cato found";
+	} else if (!BLUETOOTH) {
+		text = "Upgrade the board over USB.";
+	} else if (!running) {
+		text = "Connect to check the board's firmware, or upgrade it over USB.";
+	} else if (running.hash && latest.firmware.hash &&
+		   smp.toHex(running.hash) === smp.toHex(latest.firmware.hash)) {
+		text = "The board has the latest firmware.";
+		kind = "ok";
+		badge = "Up to date";
+	} else {
+		text = "A newer firmware is available.";
+		kind = "update";
+		badge = "Update available";
 	}
 
-	const built = new Date(latest.built);
-	const when = Number.isNaN(built.getTime()) ? "" : ` · built ${built.toLocaleString()}`;
+	ui.firmwareStatus.textContent = text;
+	ui.firmwareStatus.className = kind;
+	ui.firmwareBadge.textContent = badge;
 
-	ui.latestInfo.textContent =
-		`Latest build: version ${latest.version} · ${String(latest.commit).slice(0, 7)}${when}`;
-	ui.latestUf2.href = RELEASE_DIR + latest.usb;
-	ui.latestUse.addEventListener("click", async () => {
-		ui.file.value = "";
-		ui.latestUse.disabled = true;
-		await selectFirmware(latest.dfu, async () =>
-			new Uint8Array(await (await fetchFirmwareFile(latest.dfu)).arrayBuffer()),
-			"Latest build: ");
-	});
-	ui.latest.hidden = false;
+	if (latest) {
+		const built = new Date(latest.info.built);
+		const when = Number.isNaN(built.getTime())
+			? ""
+			: `, built ${built.toLocaleDateString(undefined, { dateStyle: "medium" })}`;
+
+		ui.firmwareLatest.textContent = `Latest: version ${latest.info.version}${when}` +
+			(running ? ` · On the board: version ${running.version}` : "");
+	}
 }
 
 function setProgress(fraction, text) {
@@ -483,15 +541,14 @@ async function waitForReboot() {
 	throw new Error("The board did not come back after the reset. Reconnect to check its state.");
 }
 
-async function upgrade() {
-	const firmware = state.firmware;
-
+async function upgrade(firmware) {
 	state.busy = true;
 	updateControls();
 	ui.log.replaceChildren();
+	ui.upgradeProgress.hidden = false;
 
 	try {
-		log(`Uploading ${firmware.name} (version ${firmware.version})…`);
+		log(`Uploading version ${firmware.version}…`);
 		setProgress(0, "0%");
 		await uploadImage(firmware.image);
 		log("Upload complete.");
@@ -527,7 +584,8 @@ async function upgrade() {
 			    "If it does not, the board reverts on its next reset.", "warn");
 			setProgress(1, "Running, not confirmed");
 		} else {
-			throw new Error("The board came back on its previous image: the new one was rejected or reverted.");
+			throw new Error("The board is still on its previous firmware: it did not accept " +
+					"the new one. Upgrading over USB will get it there.");
 		}
 	} catch (err) {
 		log(err.message, "error");
@@ -566,8 +624,14 @@ function updateControls() {
 	ui.connect.disabled = state.busy;
 	ui.refresh.disabled = !connected || state.busy;
 	ui.file.disabled = state.busy;
-	ui.latestUse.disabled = state.busy;
 	ui.upload.disabled = !connected || state.busy || !state.firmware;
+	ui.upgradeBle.disabled = !connected || state.busy || !state.latest;
+	ui.upgradeBle.title = connected ? "" : "Connect to the board first";
+	ui.upgradeUsb.disabled = state.busy || !state.latest;
+	if (!BLUETOOTH) {
+		ui.connect.disabled = true;
+	}
+	ui.usbBootloader.disabled = !connected || state.busy;
 	// No shell commands while an upgrade has the link busy.
 	controls.setConnected(connected && !state.busy);
 }
@@ -634,7 +698,82 @@ ui.refresh.addEventListener("click", () => {
 	refreshSlots().catch((err) => log(`Could not read image list: ${err.message}`, "error"));
 });
 ui.file.addEventListener("change", chooseFile);
-ui.upload.addEventListener("click", upgrade);
+ui.upload.addEventListener("click", () => upgrade(state.firmware));
+ui.upgradeBle.addEventListener("click", () => {
+	ui.usbSteps.hidden = true;
+	upgrade(state.latest.firmware);
+});
+ui.upgradeUsb.addEventListener("click", () => {
+	ui.usbSteps.hidden = !ui.usbSteps.hidden;
+});
+// Getting a board on USB into USB mode (the XIAO-SENSE drive): a legacy Cato
+// over USB HID, a board with this firmware over its USB console.
+function showUsbResult(text, kind = "") {
+	ui.usbResult.textContent = text;
+	ui.usbResult.className = `note ${kind}`;
+}
+
+async function findOnUsb(button, find) {
+	button.disabled = true;
+	showUsbResult("Choose the board in the list the browser shows…");
+	try {
+		const kind = await find();
+
+		if (!kind) {
+			throw new DOMException("Nothing chosen", "NotFoundError");
+		}
+
+		const found = `Found ${usb.describe(kind)}.`;
+
+		if (kind === usb.KIND_CURRENT || kind === usb.KIND_LEGACY) {
+			showUsbResult(`${found} It is restarting into USB mode: carry on when the ` +
+				      "XIAO-SENSE drive appears.", "ok");
+		} else if (kind === usb.KIND_BOOTLOADER) {
+			showUsbResult(`${found} Carry on with the next step.`, "ok");
+		} else {
+			showUsbResult(`${found} Double-click the board's reset button instead.`, "error");
+		}
+	} catch (err) {
+		showUsbResult(err.name === "NotFoundError"
+			? "No board chosen. If it is not in the list, double-click its reset button instead."
+			: `Could not use the board over USB (${err.message}). Close anything else that ` +
+			  "is using it, or double-click its reset button instead.", "error");
+	} finally {
+		button.disabled = false;
+		checkLegacyOnUsb();
+	}
+}
+
+ui.usbFindLegacy.hidden = !usb.HID_SUPPORTED;
+ui.usbFindLegacy.addEventListener("click", () => findOnUsb(ui.usbFindLegacy,
+	async () => (await usb.restartLegacyIntoUsbMode()) && usb.KIND_LEGACY));
+ui.usbFind.hidden = !usb.SERIAL_SUPPORTED;
+ui.usbFind.addEventListener("click", () => findOnUsb(ui.usbFind, usb.restartSerialIntoUsbMode));
+
+// A legacy Cato the page has been given access to before is noticed as soon
+// as it is plugged in (the browser reveals no others without being asked).
+async function checkLegacyOnUsb() {
+	const present = (await usb.knownLegacyDevices().catch(() => [])).length > 0;
+
+	if (present !== state.legacyOnUsb) {
+		state.legacyOnUsb = present;
+		if (present) {
+			ui.usbSteps.hidden = false;
+		}
+		showFirmwareStatus();
+	}
+}
+
+if (usb.HID_SUPPORTED) {
+	navigator.hid.addEventListener("connect", checkLegacyOnUsb);
+	navigator.hid.addEventListener("disconnect", checkLegacyOnUsb);
+	checkLegacyOnUsb();
+}
+
+ui.usbBootloader.addEventListener("click", () => {
+	// The board drops the connection and shows up as the USB drive.
+	shell.fire("bootloader").catch(() => {});
+});
 ui.clear.addEventListener("click", () => {
 	term.clear();
 	term.focus();
@@ -653,11 +792,15 @@ if ("serviceWorker" in navigator) {
 	});
 }
 
-if (!navigator.bluetooth) {
+if (!BLUETOOTH) {
 	ui.unsupported.hidden = false;
 	ui.connect.disabled = true;
+	// Bluetooth upgrades are not offered: USB is the way, so show its steps.
+	document.body.classList.add("no-bluetooth");
+	ui.upgradeUsb.classList.add("primary");
+	ui.usbSteps.hidden = false;
 } else {
 	updateControls();
 }
 setStatus("disconnected", "Disconnected");
-showLatestFirmware();
+loadLatest();

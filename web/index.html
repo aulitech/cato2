@@ -334,8 +334,21 @@ input[type="file"] { width: 100%; }
 	font-variant-numeric: tabular-nums;
 }
 
-#latest-info { margin: 0 0 6px; font-size: 13px; }
-#latest a { font-size: 13px; color: var(--accent, inherit); }
+/* Set on the page when the browser has no Web Bluetooth: only USB is offered. */
+.no-bluetooth .ble-only { display: none; }
+#firmware-status { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
+#firmware-status.ok { color: var(--ok); }
+#firmware-status.update { color: var(--warn); }
+#usb-steps { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.5; }
+#usb-steps li { margin-bottom: 6px; }
+#usb-steps .row { margin: 6px 0; }
+#usb-result { display: block; }
+#usb-result:empty { display: none; }
+#usb-result.ok { color: var(--ok); }
+#usb-result.error { color: var(--error); }
+#usb-steps a { color: var(--accent); font-weight: 600; }
+#firmware-advanced summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+#log:empty { display: none; }
 #file-info { margin: 6px 0 0; font-size: 12px; color: var(--muted); min-height: 1.45em; }
 #file-info.error { color: var(--error); }
 progress { width: 100%; height: 8px; }
@@ -374,6 +387,7 @@ progress { width: 100%; height: 8px; }
 <p id="unsupported" hidden>
 	This browser has no Web Bluetooth. Use Chrome or Edge on a computer or
 	Android, and open the page from <code>localhost</code> or over HTTPS.
+	The firmware can still be upgraded over USB, under Firmware upgrade.
 </p>
 
 <main>
@@ -677,43 +691,43 @@ progress { width: 100%; height: 8px; }
 		<section class="card" data-card="firmware">
 			<div class="card-head">
 				<h2>Firmware upgrade</h2>
-				<button id="refresh" class="small" disabled>Refresh</button>
+				<span id="firmware-badge" class="note"></span>
 			</div>
 			<div class="card-body">
-				<table>
-					<thead>
-						<tr><th>Slot</th><th>Version</th><th>Hash</th><th>State</th></tr>
-					</thead>
-					<tbody id="slots">
-						<tr><td colspan="4">Connect to see the board's images.</td></tr>
-					</tbody>
-				</table>
-
-				<div id="latest" hidden>
-					<p id="latest-info"></p>
-					<div class="row">
-						<button id="latest-use">Use latest build</button>
-						<a id="latest-uf2" download>Download usb-upgrade.uf2</a>
-					</div>
-					<p class="note">
-						<code>usb-upgrade.uf2</code> is for flashing over USB: a new board, or
-						one whose bootloader was built with a different signing key and so
-						rejects this upgrade.
-					</p>
+				<div>
+					<p id="firmware-status">Checking for the latest firmware…</p>
+					<p id="firmware-latest" class="note"></p>
 				</div>
 
-				<div>
-					<p class="note">
-						Or choose your own <code>build/cato.zip</code> or
-						<code>zephyr.signed.bin</code>:
-					</p>
-					<input id="file" type="file" accept=".zip,.bin">
-					<p id="file-info"></p>
+				<div class="row">
+					<button id="upgrade-ble" class="primary ble-only" disabled>Upgrade over Bluetooth</button>
+					<button id="upgrade-usb" disabled>Upgrade over USB…</button>
 				</div>
 
-				<button id="upload" class="primary" disabled>Upload and restart</button>
+				<ol id="usb-steps" hidden>
+					<li>
+						<a id="usb-download" download>Download the firmware file</a>
+						(<code>usb-upgrade.uf2</code>).
+					</li>
+					<li>
+						Plug the board into this computer and put it in USB mode with
+						the button that fits, or by double-clicking its reset button:
+						<span class="row">
+							<button id="usb-find-legacy" class="small" hidden>Legacy Cato</button>
+							<button id="usb-find" class="small" hidden>Board with this firmware</button>
+							<button id="usb-bootloader" class="small ble-only" disabled>Connected
+							board, over Bluetooth</button>
+						</span>
+						<span id="usb-result" class="note"></span>
+						A drive named <strong>XIAO-SENSE</strong> appears.
+					</li>
+					<li>
+						Copy the downloaded file onto that drive. The board installs it
+						and restarts by itself.
+					</li>
+				</ol>
 
-				<div>
+				<div id="upgrade-progress" hidden>
 					<progress id="progress" max="1" value="0"></progress>
 					<div id="progress-text"></div>
 				</div>
@@ -721,9 +735,39 @@ progress { width: 100%; height: 8px; }
 				<ul id="log"></ul>
 
 				<p class="note">
-					The board restarts into the new image and keeps it only if it
-					starts up correctly; otherwise it returns to the current one.
+					Settings and paired devices are kept.
+					<span class="ble-only">Over Bluetooth, a build that does not start
+					up correctly is undone automatically.</span>
 				</p>
+
+				<details id="firmware-advanced" class="ble-only">
+					<summary>Advanced</summary>
+					<div class="card-body">
+						<div>
+							<p class="note">
+								Install your own build over Bluetooth
+								(<code>build/cato.zip</code> or a <code>zephyr.signed.bin</code>):
+							</p>
+							<input id="file" type="file" accept=".zip,.bin">
+							<p id="file-info"></p>
+							<button id="upload" disabled>Install this file</button>
+						</div>
+						<div>
+							<div class="row">
+								<span class="note">Images on the board</span>
+								<button id="refresh" class="small" disabled>Refresh</button>
+							</div>
+							<table>
+								<thead>
+									<tr><th>Slot</th><th>Version</th><th>Hash</th><th>State</th></tr>
+								</thead>
+								<tbody id="slots">
+									<tr><td colspan="4">Connect to see the board's images.</td></tr>
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</details>
 			</div>
 		</section>
 	</aside>

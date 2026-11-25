@@ -362,15 +362,34 @@ the VS Code serial terminal or `screen`.
 
 ## OTA upgrade (BLE)
 
-The web app's **Firmware upgrade** card offers the most recent build of `main`
-(see [Published builds](#published-builds)): **Use latest build**, then
-**Upload and restart**.
+The web app's **Firmware upgrade** card says whether the board already has
+the most recent build of `main` (see [Published builds](#published-builds))
+and installs it with one button: **Upgrade over Bluetooth**. **Upgrade over
+USB** walks through the same upgrade with the downloaded `usb-upgrade.uf2`,
+for a new board or one that does not accept the Bluetooth upgrade.
+
+### Upgrading a legacy Cato
+
+A Cato running the earlier firmware ([z_cato](https://github.com/aulitech/z_cato))
+is upgraded over USB from the same card. Plug it in, open **Upgrade over
+USB**, and press **Legacy Cato**: the page finds it as a USB HID device
+(`1915:52DD`), sends it its own `reboot uf2` command, and it comes back as the
+`XIAO-SENSE` drive, ready for `usb-upgrade.uf2`. Once the browser has been
+given access to a legacy Cato, the card notices it whenever it is plugged in.
+**Board with this firmware** does the same for a board already on this
+firmware, through its USB console. Both need Chrome or Edge on a computer.
+
+On its first start after such an upgrade, this firmware finds the earlier
+firmware's data where its settings belong, with none of its own in it, and
+erases that area once. The board starts with default settings and no paired
+devices, so remove ("forget") the old Cato on phones and computers and pair
+again.
 
 For your own build:
 
 1. Bump the version in `VERSION` and rebuild.
-2. Upload `build/cato.zip` with the web app (see
-   [Connecting](#connecting)) or with **nRF Connect Device Manager**
+2. Upload `build/cato.zip` with the web app (**Advanced** in the Firmware
+   upgrade card, see [Connecting](#connecting)) or with **nRF Connect Device Manager**
    (iOS/Android).
 
 Up to three devices can be connected at once, so a console session or a
