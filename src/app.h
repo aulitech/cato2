@@ -22,6 +22,9 @@ struct bt_conn;
  */
 int ble_shell_init(void);
 
+/* ble_shell.c: change the Bluetooth shell's prompt. */
+int ble_shell_set_prompt(const char *prompt);
+
 /*
  * hid.c: register the HID service (before Bluetooth is enabled) and tell it
  * about each connection.

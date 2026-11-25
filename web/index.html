@@ -203,6 +203,8 @@ body[data-dock="bottom"] #console {
 	max-height: 75%;
 }
 #console .card-head h2 { margin-right: auto; }
+#console-locked { margin-right: auto; color: var(--warn); }
+#console .card-head:has(#console-locked:not([hidden])) h2 { margin-right: 0; }
 #console-resizer {
 	flex: none;
 	width: 5px;
@@ -296,6 +298,10 @@ body:not([data-console="open"]) #console-resizer { display: none; }
 .message.error { color: var(--error); }
 .note { margin: 0; font-size: 12px; color: var(--muted); }
 
+/* Shown only with Developer mode on (Settings); see also setEnabled() in
+   controls.js, which keeps .developer-only controls disabled without it. */
+body:not(.developer) .developer-hidden { display: none; }
+
 /* Blink pattern */
 #blink-preview { display: flex; gap: 4px; flex-wrap: wrap; min-height: 18px; }
 #blink-preview span, .swatch {
@@ -350,6 +356,8 @@ th, td { padding: 4px 6px 4px 0; text-align: left; vertical-align: middle; }
 th { color: var(--muted); font-weight: 500; }
 td:last-child, th:last-child { padding-right: 0; }
 #bonds-list td:last-child { text-align: right; }
+#bonds-list input { width: 100%; }
+#bonds-list td { vertical-align: top; padding: 3px 4px; }
 
 input[type="file"] { width: 100%; }
 /* Orientation viewer: a slab of six faces, turned as a whole by orientation.js. */
@@ -415,6 +423,38 @@ input[type="file"] { width: 100%; }
 #orientation-model .axis { position: absolute; font-size: 11px; font-weight: 600; opacity: 0.85; }
 #orientation-model .axis.x { right: 6px; top: 50%; transform: translateY(-50%); }
 #orientation-model .axis.y { top: 4px; left: 50%; transform: translateX(-50%); }
+/* Where the screen is, as the board sees it: one spot on each side of the
+   board, and the chosen one drawn as a screen. They always face the viewer. */
+#orientation-model .screen-spot {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 14px;
+	height: 14px;
+	margin: -7px 0 0 -7px;
+	padding: 0;
+	border: 1px solid var(--muted);
+	border-radius: 50%;
+	background: var(--panel);
+	opacity: 0.75;
+	font-size: 0;
+}
+#orientation-model .screen-spot:hover { border-color: var(--accent); opacity: 1; }
+#orientation-model .screen-spot[aria-pressed="true"] {
+	width: 46px;
+	height: 30px;
+	margin: -15px 0 0 -23px;
+	border: 2px solid var(--accent);
+	border-bottom-width: 5px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--accent) 25%, var(--panel));
+	color: var(--text);
+	opacity: 1;
+	font-size: 9px;
+	font-weight: 600;
+	cursor: default;
+}
+#orientation-model .screen-spot[hidden] { display: none; }
 #orientation-roll, #orientation-pitch, #orientation-yaw {
 	display: inline-block;
 	min-width: 3.2em;
@@ -606,7 +646,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 				<span id="imu-saved" class="note"></span>
 			</div>
 			<div class="card-body">
-				<div class="sensor-grid">
+				<div class="sensor-grid developer-only">
 					<span></span>
 					<span class="head">Rate (Hz)</span>
 					<span class="head">Range</span>
@@ -645,17 +685,17 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 
 				<div class="row spread">
 					<div class="row">
-						<button id="imu-read" disabled>Read</button>
-						<label><input id="imu-live" type="checkbox" disabled> Live</label>
+						<button id="imu-live-toggle" class="small" aria-pressed="true" disabled>Pause</button>
+						<span id="imu-live-note" class="note"></span>
 					</div>
-					<div class="row">
+					<div class="row developer-only developer-hidden">
 						<button id="imu-save" disabled>Save</button>
 						<button id="imu-reset" disabled>Reset</button>
 					</div>
 				</div>
 				<p class="message"></p>
 
-				<details>
+				<details class="developer-only developer-hidden">
 					<summary>Registers</summary>
 					<div class="card-body">
 						<div class="row">
@@ -744,9 +784,10 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 					<button id="hid-scroll-up" class="small" disabled>Scroll up</button>
 					<button id="hid-scroll-down" class="small" disabled>Scroll down</button>
 				</div>
-				<div id="hid-air" hidden>
+				<details id="hid-air" hidden>
+					<summary>Pointer <span id="air-state"></span></summary>
+					<div class="card-body">
 					<div class="row">
-						<label><input id="air-on" type="checkbox" disabled> Air mouse</label>
 						<label for="air-deadzone">Dead zone</label>
 						<input id="air-deadzone" type="number" min="0" max="20" disabled>
 						<span class="note">°/s</span>
@@ -769,10 +810,6 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 							<option value="manual">Fixed gyroscope axes</option>
 						</select>
 					</div>
-					<div class="row" id="air-auto">
-						<label for="air-forward">Board axis pointing at the screen</label>
-						<select id="air-forward" disabled></select>
-					</div>
 					<div class="row" id="air-manual" hidden>
 						<label for="air-axis-x">Pointer X from</label>
 						<select id="air-axis-x" disabled></select>
@@ -780,14 +817,16 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 						<select id="air-axis-y" disabled></select>
 					</div>
 					<p class="note">
-						Turning the board moves the pointer. Needs the mouse report on.
+						Turning the board moves the pointer. It is on whenever the Mouse
+						report above is.
 						Speed is pointer steps per degree, set separately for sideways (X) and
 						up-down (Y). With acceleration, slower turns than the rate given move
 						the pointer less than that and faster turns more. Automatic directions work however
-						the board is held, as long as it knows which of its axes points at
-						the screen.
+						the board is held, as long as it knows where the screen is: show it
+						on the Orientation card.
 					</p>
 				</div>
+				</details>
 				<div class="row">
 					<label for="hid-key">Key</label>
 					<input id="hid-key" class="grow mono" type="text" placeholder="enter, ctrl+c, shift+f5"
@@ -837,6 +876,11 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 					<span>Heading <strong id="orientation-yaw">–</strong></span>
 					<button id="orientation-zero" class="small" disabled>Face forward</button>
 				</div>
+				<p id="orientation-screen-note" class="note" hidden>
+					Point the board at the screen as you will use it. If the screen drawn
+					here is not where the real one is, click the dot that is: the pointer
+					then moves the right way however the board is held.
+				</p>
 				<p id="orientation-note" class="note"></p>
 			</div>
 		</section>
@@ -934,6 +978,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 	<section id="console" class="card">
 		<div class="card-head">
 			<h2>Console</h2>
+			<span id="console-locked" class="note" hidden>Input is off while the IMU card is live</span>
 			<span class="dock-buttons">
 				<button data-dock="left" title="Dock left" aria-label="Dock the console left">
 					<svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect x="2" y="3" width="5" height="10" fill="currentColor" stroke="none"/></svg>
@@ -980,6 +1025,13 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 		</div>
 		<div class="setting">
 			<div>
+				<label for="setting-developer">Developer mode</label>
+				<p class="note">Lets the IMU card change the sensor's configuration and registers. Without it the card only shows them.</p>
+			</div>
+			<input id="setting-developer" type="checkbox">
+		</div>
+		<div class="setting">
+			<div>
 				Card and console arrangement
 				<p class="note">Puts the cards and the console back where they started. Reloads the page, which disconnects the board.</p>
 			</div>
@@ -1010,12 +1062,14 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 			<ul>
 				<li>Check that it has power and is not asleep: press its reset button once.</li>
 				<li>A board accepts new devices only while pairing is allowed. On a device already paired with it, switch on <strong>Allow new devices to pair</strong> under Paired devices.</li>
-				<li>If pairing keeps failing, or the board was reset to factory defaults, remove ("forget") the board in the computer's Bluetooth settings and connect again.</li>
+				<li>If pairing keeps failing, remove ("forget") the board in the computer's Bluetooth settings and connect again.</li>
+				<li>After <strong>Reset to factory defaults</strong> the app forgets the board and does not reconnect. Forget the board in the computer's Bluetooth settings too, then press <strong>Connect</strong> and pair again.</li>
 			</ul>
 		</div>
 		<div>
 			<h3>Cards</h3>
 			<p>Each card controls one part of the board. Click a heading to open a card, which closes the one that was open (the Orientation card stays as it is); drag the dots at the left of the heading to move it. Changes made on a card are sent to the board as the same commands you could type in the console.</p>
+			<p>The IMU card shows the sensor's configuration and live readings while it is open. The readings use the console's line to the board, so typing in the console is off meanwhile: <strong>Pause</strong> on the card gives it back. Changing the configuration needs <strong>Developer mode</strong>, under Settings.</p>
 		</div>
 		<div>
 			<h3>Console</h3>

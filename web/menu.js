@@ -104,9 +104,21 @@ export function initMenu({ term, refit, about }) {
 		} else {
 			delete document.documentElement.dataset.theme;
 		}
+		// The cards look at this class, and are told when it changes.
+		document.body.classList.toggle("developer", Boolean(settings.developer));
+		window.dispatchEvent(new Event("developer-mode"));
 		term.options.fontSize = settings.fontSize || DEFAULT_FONT_SIZE;
 		refit();
 	}
+
+	const developer = $("setting-developer");
+
+	developer.checked = Boolean(settings.developer);
+	developer.addEventListener("change", () => {
+		settings.developer = developer.checked;
+		saveSettings(settings);
+		apply();
+	});
 
 	theme.value = settings.theme || "system";
 	fontSize.value = String(settings.fontSize || DEFAULT_FONT_SIZE);

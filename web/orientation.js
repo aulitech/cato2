@@ -4,6 +4,10 @@
 // one. The board notifies its fused orientation as a quaternion 50 times a
 // second (see "orientation stream" in src/hid.c); it is only asked to while
 // the viewer's card is open.
+//
+// Around the board is a screen: where the board believes the screen it points
+// at to be, which the pointer (air mouse) needs to know. The user moves it to
+// the side of the board the real screen is on.
 
 export const ORIENTATION_SERVICE = "7c3b0001-5f1e-4c8a-9d2e-3a6b8f1c2d4e";
 export const ORIENTATION_VALUE = "7c3b0002-5f1e-4c8a-9d2e-3a6b8f1c2d4e";
@@ -78,7 +82,42 @@ export function cssMatrix(r) {
 		`${m[0][2]},${m[1][2]},${m[2][2]},0,0,0,0,1)`;
 }
 
-export function initOrientation() {
+/**
+ * The inverse of cssMatrix(r) followed by the inverse of the camera's tilt:
+ * a child of the model with this transform faces the viewer squarely.
+ */
+export function cssFacingViewer(r, cameraTilt) {
+	const m = [
+		[r[0][0], -r[0][2], -r[0][1]],
+		[-r[2][0], r[2][2], r[2][1]],
+		[-r[1][0], r[1][2], r[1][1]],
+	];
+
+	// The transpose of a rotation is its inverse.
+	return `matrix3d(${m[0][0]},${m[0][1]},${m[0][2]},0,` +
+		`${m[1][0]},${m[1][1]},${m[1][2]},0,` +
+		`${m[2][0]},${m[2][1]},${m[2][2]},0,0,0,0,1) rotateX(${-cameraTilt}deg)`;
+}
+
+const CAMERA_TILT = -24; // degrees, as in the stylesheet
+const IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+
+// Where the screen is drawn for each board axis that can point at it, in the
+// model's own space (X right, Y down, Z towards the viewer; see cssMatrix).
+const SCREEN_SPOTS = {
+	"+x": [115, 0, 0],
+	"-x": [-115, 0, 0],
+	"+y": [0, 0, -95],
+	"-y": [0, 0, 95],
+	"+z": [0, -60, 0],
+	"-z": [0, 60, 0],
+};
+
+/**
+ * @param setForward  async (axis) => void, tells the board which of its axes
+ *                    points at the screen
+ */
+export function initOrientation({ setForward }) {
 	const card = document.querySelector('[data-card="orientation"]');
 	const model = $("orientation-model");
 	const note = $("orientation-note");
@@ -91,6 +130,56 @@ export function initOrientation() {
 	let frame = 0;
 	let count = 0;
 	let countSince = performance.now();
+	let forward = null; // the axis pointing at the screen, once the board has said
+	const spots = {};
+
+	function placeSpots(rotation) {
+		const facing = cssFacingViewer(rotation, CAMERA_TILT);
+
+		for (const [axis, [x, y, z]] of Object.entries(SCREEN_SPOTS)) {
+			spots[axis].style.transform = `translate3d(${x}px,${y}px,${z}px) ${facing}`;
+		}
+	}
+
+	function showSpots() {
+		for (const [axis, spot] of Object.entries(spots)) {
+			spot.hidden = !forward;
+			spot.setAttribute("aria-pressed", String(axis === forward));
+			spot.textContent = axis === forward ? "screen" : "";
+		}
+		$("orientation-screen-note").hidden = !forward;
+	}
+
+	for (const axis of Object.keys(SCREEN_SPOTS)) {
+		const spot = document.createElement("button");
+		const side = `${axis[0] === "+" ? "" : "−"}${axis[1].toUpperCase()}`;
+
+		spot.className = "screen-spot";
+		spot.type = "button";
+		spot.title = `The screen is on the board's ${side} side`;
+		spot.setAttribute("aria-label", spot.title);
+		spot.addEventListener("click", async () => {
+			const before = forward;
+
+			if (axis === forward) {
+				return;
+			}
+			// Moved at once; put back if the board does not take it.
+			forward = axis;
+			showSpots();
+			try {
+				await setForward(axis);
+			} catch (err) {
+				forward = before;
+				showSpots();
+				note.textContent = `Could not move the screen: ${err.message}`;
+			}
+		});
+		model.append(spot);
+		spots[axis] = spot;
+	}
+	placeSpots(IDENTITY);
+	showSpots();
 
 	function draw() {
 		frame = 0;
@@ -104,7 +193,10 @@ export function initOrientation() {
 		const q = withoutYaw(latest, zeroYaw);
 		const { roll, pitch, yaw } = eulerDegrees(q);
 
-		model.style.transform = cssMatrix(rotationMatrix(q));
+		const rotation = rotationMatrix(q);
+
+		model.style.transform = cssMatrix(rotation);
+		placeSpots(rotation);
 		$("orientation-roll").textContent = `${roll.toFixed(0)}°`;
 		$("orientation-pitch").textContent = `${pitch.toFixed(0)}°`;
 		$("orientation-yaw").textContent = `${yaw.toFixed(0)}°`;
@@ -205,6 +297,14 @@ export function initOrientation() {
 
 	return {
 		/**
+		 * Call with the board axis that points at the screen, as the board
+		 * reports it; null when it is not known (disconnected, old firmware).
+		 */
+		showForward(axis) {
+			forward = axis in SCREEN_SPOTS ? axis : null;
+			showSpots();
+		},
+		/**
 		 * Call with the orientation characteristic after connecting (null if
 		 * the firmware has none), and with nothing after disconnecting.
 		 */
@@ -217,6 +317,10 @@ export function initOrientation() {
 			streaming = false;
 			latest = null;
 			zeroYaw = null;
+			if (!connected) {
+				forward = null;
+				showSpots();
+			}
 			$("orientation-zero").disabled = !source;
 			$("orientation-rate").textContent = "";
 			if (source) {

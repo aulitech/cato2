@@ -14,6 +14,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/shell/shell_uart.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/reboot.h>
 #include <hal/nrf_power.h>
@@ -172,11 +173,13 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	hid_disconnected(conn);
 }
 
+/* The chip's unique ID in hex, once set_serial_number() has read it. */
+static char serial[2 * 8 + 1];
+
 /* Device Information Service serial number: the chip's unique ID, in hex. */
 static void set_serial_number(void)
 {
-	uint8_t id[8];
-	char serial[2 * sizeof(id) + 1];
+	uint8_t id[(sizeof(serial) - 1) / 2];
 	ssize_t len = hwinfo_get_device_id(id, sizeof(id));
 	int err;
 
@@ -191,6 +194,62 @@ static void set_serial_number(void)
 		LOG_WRN("Could not set the serial number (err %d)", err);
 	} else {
 		LOG_INF("Serial number %s", serial);
+	}
+}
+
+/*
+ * Both shells prompt with the board's name, so it is plain which board
+ * answers. A shell that is busy refuses the change: the USB one is, from boot
+ * until a terminal opens its port. So it is tried again until both have it.
+ */
+static void prompt_work_handler(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(prompt_work, prompt_work_handler);
+
+static void update_prompt(void)
+{
+	char prompt[CONFIG_BT_DEVICE_NAME_MAX + sizeof(":~$ ")];
+	int err;
+
+	snprintk(prompt, sizeof(prompt), "%s:~$ ", bt_get_name());
+
+	err = ble_shell_set_prompt(prompt);
+	if (IS_ENABLED(CONFIG_SHELL_BACKEND_SERIAL) &&
+	    shell_prompt_change(shell_backend_uart_get_ptr(), prompt) != 0) {
+		err = -EBUSY;
+	}
+	if (err) {
+		k_work_reschedule(&prompt_work, K_MSEC(500));
+	}
+}
+
+static void prompt_work_handler(struct k_work *work)
+{
+	update_prompt();
+}
+
+/*
+ * A board that has not been named is Cato_xxxx, the last four digits of its
+ * serial number, so that boards side by side can be told apart. Call after
+ * the Bluetooth settings, which hold a name given with "name", are loaded.
+ */
+static void set_default_name(void)
+{
+	char name[sizeof("Cato_xxxx")];
+	size_t len = strlen(serial);
+	int err;
+
+	if (strcmp(bt_get_name(), CONFIG_BT_DEVICE_NAME) != 0 || len < 4) {
+		return;
+	}
+
+	snprintk(name, sizeof(name), "Cato_%s", &serial[len - 4]);
+	for (char *c = &name[5]; *c != '\0'; c++) {
+		*c = toupper((unsigned char)*c);
+	}
+
+	err = bt_set_name(name);
+	if (err) {
+		LOG_WRN("Could not set the default name (err %d)", err);
 	}
 }
 
@@ -262,6 +321,7 @@ static int cmd_name(const struct shell *sh, size_t argc, char **argv)
 	/* Takes effect now if advertising; otherwise when advertising next starts. */
 	build_ad(ad);
 	(void)bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	update_prompt();
 
 	/* Bluetooth stores the name in settings itself. */
 	return 0;
@@ -456,12 +516,14 @@ int main(void)
 		LOG_ERR("Could not load Bluetooth settings (err %d)", err);
 	}
 	set_serial_number();
+	set_default_name();
 
 	err = ble_shell_init();
 	if (err) {
 		LOG_ERR("Failed to start the Bluetooth shell (err %d)", err);
 		return 0;
 	}
+	update_prompt();
 
 	k_work_submit(&adv_work);
 

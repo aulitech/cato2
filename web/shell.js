@@ -8,11 +8,24 @@
 
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 const ERROR_COLOUR = "\x1b[1;31m";
-const PROMPT = /[\w.-]+:~\$ $/;
+// The prompt is the board's name, which may hold any characters, then ":~$ ".
+const PROMPT = /:~\$ $/;
 const LOG_LINE = /^\[\d\d:\d\d:\d\d\.\d{3},\d{3}\] <\w+> /;
 const CLEAR_LINE = "\x15";
 
 export class ShellError extends Error {}
+
+/**
+ * Matches the board's echo of a command: its characters, then the end of the
+ * line. A long command wraps in the board's idea of the terminal, which puts
+ * line ends and cursor movements between the characters.
+ */
+function echoOf(command) {
+	const between = "(?:\\x1b\\[[0-9;]*[A-Za-z]|[\\r\\n])*";
+	const characters = [...command].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+
+	return new RegExp(`${characters.join(between)}${between}\\r?\\n`, "g");
+}
 
 export class ShellRunner {
 	/**
@@ -40,15 +53,20 @@ export class ShellRunner {
 
 		active.text += this.decoder.decode(bytes, { stream: true });
 
-		// The echoed command ends the first line; the reply follows it and is
-		// complete once the prompt is back.
-		const echoEnd = active.text.indexOf("\n");
+		// The reply follows the echo of the command and is complete once the
+		// prompt is back. Whatever came before the echo is not part of it: after
+		// a restart the board first sends what it had waiting, boot messages and
+		// a prompt among it.
+		let echoEnd = -1;
 
+		for (const match of active.text.matchAll(active.echo)) {
+			echoEnd = match.index + match[0].length;
+		}
 		if (echoEnd < 0) {
 			return;
 		}
 
-		const raw = active.text.slice(echoEnd + 1);
+		const raw = active.text.slice(echoEnd);
 		const reply = raw.replace(ANSI, "");
 
 		if (!PROMPT.test(reply)) {
@@ -86,7 +104,7 @@ export class ShellRunner {
 	 */
 	run(command, { quiet = false, timeout = 4000 } = {}) {
 		const result = this.queue.then(() => new Promise((resolve, reject) => {
-			const active = { text: "", quiet, resolve, reject, timer: null };
+			const active = { text: "", echo: echoOf(command), quiet, resolve, reject, timer: null };
 
 			active.timer = setTimeout(() => {
 				this.finish(active, new Error(`No reply to "${command}"`));
@@ -174,12 +192,18 @@ export function parseBonds(lines) {
 	}
 
 	const bonds = lines.slice(0, -1).map((line) => {
-		const match = /^(\d+)\s+(\S+ \(\w+\))(\s+\(connected\))?$/.exec(line);
+		// The name, in quotes, is absent if none was given and on earlier firmware.
+		const match = /^(\d+)\s+(\S+ \(\w+\))(\s+\(connected\))?(?:\s+"(.*)")?$/.exec(line);
 
 		if (!match) {
 			throw new Error("Unexpected reply to bonds");
 		}
-		return { index: Number(match[1]), address: match[2], connected: Boolean(match[3]) };
+		return {
+			index: Number(match[1]),
+			address: match[2],
+			connected: Boolean(match[3]),
+			name: match[4] || "",
+		};
 	});
 
 	return {
