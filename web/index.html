@@ -203,6 +203,8 @@ body[data-dock="bottom"] #console {
 	max-height: 75%;
 }
 #console .card-head h2 { margin-right: auto; }
+#console-locked { margin-right: auto; color: var(--warn); }
+#console .card-head:has(#console-locked:not([hidden])) h2 { margin-right: 0; }
 #console-resizer {
 	flex: none;
 	width: 5px;
@@ -296,6 +298,10 @@ body:not([data-console="open"]) #console-resizer { display: none; }
 .message.error { color: var(--error); }
 .note { margin: 0; font-size: 12px; color: var(--muted); }
 
+/* Shown only with Developer mode on (Settings); see also setEnabled() in
+   controls.js, which keeps .developer-only controls disabled without it. */
+body:not(.developer) .developer-hidden { display: none; }
+
 /* Blink pattern */
 #blink-preview { display: flex; gap: 4px; flex-wrap: wrap; min-height: 18px; }
 #blink-preview span, .swatch {
@@ -350,6 +356,8 @@ th, td { padding: 4px 6px 4px 0; text-align: left; vertical-align: middle; }
 th { color: var(--muted); font-weight: 500; }
 td:last-child, th:last-child { padding-right: 0; }
 #bonds-list td:last-child { text-align: right; }
+#bonds-list input { width: 100%; }
+#bonds-list td { vertical-align: top; padding: 3px 4px; }
 
 input[type="file"] { width: 100%; }
 /* Orientation viewer: a slab of six faces, turned as a whole by orientation.js. */
@@ -638,7 +646,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 				<span id="imu-saved" class="note"></span>
 			</div>
 			<div class="card-body">
-				<div class="sensor-grid">
+				<div class="sensor-grid developer-only">
 					<span></span>
 					<span class="head">Rate (Hz)</span>
 					<span class="head">Range</span>
@@ -677,17 +685,17 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 
 				<div class="row spread">
 					<div class="row">
-						<button id="imu-read" disabled>Read</button>
-						<label><input id="imu-live" type="checkbox" disabled> Live</label>
+						<button id="imu-live-toggle" class="small" aria-pressed="true" disabled>Pause</button>
+						<span id="imu-live-note" class="note"></span>
 					</div>
-					<div class="row">
+					<div class="row developer-only developer-hidden">
 						<button id="imu-save" disabled>Save</button>
 						<button id="imu-reset" disabled>Reset</button>
 					</div>
 				</div>
 				<p class="message"></p>
 
-				<details>
+				<details class="developer-only developer-hidden">
 					<summary>Registers</summary>
 					<div class="card-body">
 						<div class="row">
@@ -970,6 +978,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 	<section id="console" class="card">
 		<div class="card-head">
 			<h2>Console</h2>
+			<span id="console-locked" class="note" hidden>Input is off while the IMU card is live</span>
 			<span class="dock-buttons">
 				<button data-dock="left" title="Dock left" aria-label="Dock the console left">
 					<svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect x="2" y="3" width="5" height="10" fill="currentColor" stroke="none"/></svg>
@@ -1016,6 +1025,13 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 		</div>
 		<div class="setting">
 			<div>
+				<label for="setting-developer">Developer mode</label>
+				<p class="note">Lets the IMU card change the sensor's configuration and registers. Without it the card only shows them.</p>
+			</div>
+			<input id="setting-developer" type="checkbox">
+		</div>
+		<div class="setting">
+			<div>
 				Card and console arrangement
 				<p class="note">Puts the cards and the console back where they started. Reloads the page, which disconnects the board.</p>
 			</div>
@@ -1046,12 +1062,14 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 			<ul>
 				<li>Check that it has power and is not asleep: press its reset button once.</li>
 				<li>A board accepts new devices only while pairing is allowed. On a device already paired with it, switch on <strong>Allow new devices to pair</strong> under Paired devices.</li>
-				<li>If pairing keeps failing, or the board was reset to factory defaults, remove ("forget") the board in the computer's Bluetooth settings and connect again.</li>
+				<li>If pairing keeps failing, remove ("forget") the board in the computer's Bluetooth settings and connect again.</li>
+				<li>After <strong>Reset to factory defaults</strong> the app forgets the board and does not reconnect. Forget the board in the computer's Bluetooth settings too, then press <strong>Connect</strong> and pair again.</li>
 			</ul>
 		</div>
 		<div>
 			<h3>Cards</h3>
 			<p>Each card controls one part of the board. Click a heading to open a card, which closes the one that was open (the Orientation card stays as it is); drag the dots at the left of the heading to move it. Changes made on a card are sent to the board as the same commands you could type in the console.</p>
+			<p>The IMU card shows the sensor's configuration and live readings while it is open. The readings use the console's line to the board, so typing in the console is off meanwhile: <strong>Pause</strong> on the card gives it back. Changing the configuration needs <strong>Developer mode</strong>, under Settings.</p>
 		</div>
 		<div>
 			<h3>Console</h3>

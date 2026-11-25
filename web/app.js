@@ -77,6 +77,7 @@ const state = {
 	expectDisconnect: false, // a Bluetooth upgrade is resetting the board
 	userDisconnect: false, // the user pressed Disconnect
 	reconnect: null, // the token of the reconnection under way
+	consoleLocked: false, // typing in the console is off (IMU card live)
 };
 
 const assembler = new smp.PacketAssembler();
@@ -102,7 +103,7 @@ new ResizeObserver(() => fit.fit()).observe(ui.terminal);
 
 // Typed in the console, here or in its popped-out window.
 function sendInput(data) {
-	if (state.nusRx) {
+	if (state.nusRx && !state.consoleLocked) {
 		write(state.nusRx, encoder.encode(data)).catch(() => {});
 	}
 }
@@ -161,6 +162,14 @@ const orientation = initOrientation({
 const controls = initControls({
 	shell,
 	onForward: (axis) => orientation.showForward(axis),
+	onFactoryReset: forgetDevice,
+	// The IMU card's live readings use the console's line to the board.
+	onLive: (live) => {
+		state.consoleLocked = live;
+		term.options.disableStdin = live;
+		term.options.cursorBlink = !live;
+		$("console-locked").hidden = !live;
+	},
 	onName: (name) => {
 		if (name) {
 			ui.deviceName.textContent = name;
@@ -345,6 +354,14 @@ function stopReconnecting() {
 	updateControls();
 }
 
+// Reloading or closing the page while it is trying to reconnect ends the
+// attempt for good: the page that loads next does not take it up again.
+window.addEventListener("pagehide", () => {
+	if (state.reconnect) {
+		stopReconnecting();
+	}
+});
+
 // After a reload: the browser still holds the permission for the board (where
 // it lets a page ask, see getDevices), so connect to it again without asking.
 async function restoreConnection() {
@@ -409,6 +426,47 @@ function onDisconnected() {
 	if (wasConnected && !byUser && !state.expectDisconnect) {
 		reconnect();
 	}
+}
+
+/**
+ * After a factory reset the board no longer knows this computer, so the
+ * connection is not to be had back: no reconnecting, and the browser's
+ * permission for the board is given up, as is the memory of it.
+ */
+async function forgetDevice() {
+	const device = state.device;
+
+	state.userDisconnect = true;
+	state.reconnect = null;
+	rememberDevice(null);
+	if (!device) {
+		return;
+	}
+	// The board restarts half a second after the command; let it go first.
+	await sleep(1000);
+	try {
+		if (device.forget) {
+			await device.forget();
+		}
+	} catch {
+		// The permission stays, then; nothing else depends on it.
+	}
+	if (device.gatt.connected) {
+		device.gatt.disconnect();
+	}
+	device.removeEventListener("gattserverdisconnected", onDisconnected);
+	if (state.device === device) {
+		state.device = null;
+	}
+	// The link may have gone without its event, the listener being removed.
+	if (state.nusRx || state.smpChar) {
+		state.userDisconnect = true;
+		onDisconnected();
+	}
+	state.userDisconnect = false;
+	setStatus("disconnected", "Disconnected");
+	ui.deviceName.textContent = "";
+	updateControls();
 }
 
 function disconnect() {

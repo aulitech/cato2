@@ -128,7 +128,7 @@ made with:
 
 ```
 Cato_1A2B:~$ version
-firmware 0.2.2
+firmware 0.2.3
 ```
 
 `factory_reset confirm` erases everything the board has stored – name, blink,
@@ -182,9 +182,18 @@ and upgrades. The USB console needs no pairing.
 Cato_1A2B:~$ bonds
 1  80:A9:97:09:B1:31 (public)  (connected)
 1 of 5 bonds used, pairing on
+Cato_1A2B:~$ bonds name 1 Office Mac
+Cato_1A2B:~$ bonds
+1  80:A9:97:09:B1:31 (public)  (connected)  "Office Mac"
+1 of 5 bonds used, pairing on
 ```
 
 - `bonds` – list the bonded devices
+- `bonds name <number> [name]` – give a bonded device a name of up to 14
+  characters, shown in the list in quotes; with no name, take it away. The
+  name is kept on the board and goes when the bond is removed.
+  A device with no name is asked for its own when it connects (its Bluetooth
+  Device Name), and the first 14 plain characters of that become its name.
 - `bonds remove <number|all>` – forget one device, or all of them
 - `bonds pairing <on|off>` – accept or refuse new devices; kept across resets
 

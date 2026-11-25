@@ -37,7 +37,9 @@ const LIVE_INTERVAL_MS = 400;
  * @param shell   ShellRunner
  * @param onName  (string) => void, called when the board's name is known
  */
-export function initControls({ shell, onName, onForward }) {
+const BOND_NAME_MAX = 14; // as on the board
+
+export function initControls({ shell, onName, onForward, onFactoryReset, onLive }) {
 	const cards = document.querySelectorAll("#controls .card:not([data-card='firmware'])");
 	let connected = false;
 	let liveTimer = null;
@@ -51,13 +53,19 @@ export function initControls({ shell, onName, onForward }) {
 		el.classList.toggle("error", isError);
 	}
 
+	// Controls inside .developer-only stay disabled without Developer mode
+	// (Settings): what they show can be read, not changed.
+	const developerMode = () => document.body.classList.contains("developer");
+
 	function setEnabled(enabled) {
 		for (const card of cards) {
 			for (const el of card.querySelectorAll("button:not(.card-grip), input, select")) {
-				el.disabled = !enabled;
+				el.disabled = !enabled || (!developerMode() && Boolean(el.closest(".developer-only")));
 			}
 		}
 	}
+
+	window.addEventListener("developer-mode", () => setEnabled(connected));
 
 	/** Runs one card action, reporting the board's error message if it fails. */
 	async function act(card, action, done = "") {
@@ -117,10 +125,14 @@ export function initControls({ shell, onName, onForward }) {
 
 	$("factory-reset").addEventListener("click", () => {
 		if (confirm("Reset the board to factory defaults?\n\nThis erases its name, blink, " +
-			    "IMU and HID settings and all paired devices, then restarts it. To connect " +
-			    "again, first remove (forget) the board in the Bluetooth settings of this " +
-			    "and every other paired device.")) {
-			act("device", () => shell.fire("factory_reset confirm"));
+			    "IMU and HID settings and all paired devices, then restarts it. The app " +
+			    "forgets the board and does not reconnect. To connect again, first remove " +
+			    "(forget) the board in the Bluetooth settings of this and every other " +
+			    "paired device.")) {
+			act("device", async () => {
+				await shell.fire("factory_reset confirm");
+				await onFactoryReset();
+			});
 		}
 	});
 
@@ -230,31 +242,67 @@ export function initControls({ shell, onName, onForward }) {
 		$("imu-temp").textContent = reading.temp === null ? "–" : reading.temp.toFixed(1);
 	}
 
+	// Readings are live while the card is open: read again and again, kept out
+	// of the console so that it stays readable.
+	const imuCard = document.querySelector('[data-card="imu"]');
+	let liveRunning = false;
+	let livePaused = false; // by the button on the card
+	let liveReported = false;
+
 	function stopLive() {
 		clearTimeout(liveTimer);
 		liveTimer = null;
-		$("imu-live").checked = false;
 	}
+
+	const liveWanted = () => connected && !livePaused && imuCard.classList.contains("open");
 
 	async function liveTick() {
-		// Kept out of the console so it stays readable.
-		const ok = await act("imu", () => readImu(true));
-
-		if (ok && connected && $("imu-live").checked) {
+		liveTimer = null;
+		if (liveRunning || !liveWanted()) {
+			return;
+		}
+		liveRunning = true;
+		try {
+			await readImu(true);
+		} catch {
+			// A reading lost, to a busy link or a board on its way out: the
+			// next one is tried all the same, while the card stays open.
+		}
+		liveRunning = false;
+		if (liveWanted() && liveTimer === null) {
 			liveTimer = setTimeout(liveTick, LIVE_INTERVAL_MS);
-		} else {
-			stopLive();
 		}
 	}
 
-	$("imu-read").addEventListener("click", () => act("imu", () => readImu(false)));
-	$("imu-live").addEventListener("change", () => {
-		if ($("imu-live").checked) {
-			liveTick();
-		} else {
-			stopLive();
+	function syncLive() {
+		const live = liveWanted();
+		const toggle = $("imu-live-toggle");
+
+		toggle.textContent = livePaused ? "Play" : "Pause";
+		toggle.title = livePaused ? "Read the sensor continuously" : "Stop reading the sensor";
+		toggle.setAttribute("aria-pressed", String(!livePaused));
+		$("imu-live-note").textContent = livePaused ? "Readings paused" : "";
+
+		// The readings share the console's line to the board, and each one
+		// would wipe what is being typed there: the console is told to hold off.
+		if (live !== liveReported) {
+			liveReported = live;
+			onLive(live);
 		}
+
+		if (!liveWanted()) {
+			stopLive();
+		} else if (liveTimer === null && !liveRunning) {
+			liveTick();
+		}
+	}
+
+	$("imu-live-toggle").addEventListener("click", () => {
+		livePaused = !livePaused;
+		syncLive();
 	});
+
+	new MutationObserver(syncLive).observe(imuCard, { attributes: true, attributeFilter: ["class"] });
 
 	$("imu-save").addEventListener("click", () => act("imu", async () => {
 		await shell.run("imu save");
@@ -317,9 +365,27 @@ export function initControls({ shell, onName, onForward }) {
 			const row = list.insertRow();
 			const remove = document.createElement("button");
 
+			const name = document.createElement("input");
+			const address = document.createElement("div");
+
 			row.insertCell().textContent = bond.index;
-			row.insertCell().textContent = bond.address;
-			row.cells[1].className = "mono";
+
+			// A name for the device, kept on the board; its address underneath.
+			name.type = "text";
+			name.maxLength = BOND_NAME_MAX;
+			name.value = bond.name;
+			name.placeholder = "Name this device";
+			name.setAttribute("aria-label", `Name of paired device ${bond.index}`);
+			name.addEventListener("change", () => act("bonds", async () => {
+				try {
+					await shell.run(`bonds name ${bond.index} ${name.value.trim()}`.trim());
+				} finally {
+					await loadBonds().catch(() => {});
+				}
+			}, "Saved."));
+			address.className = "note mono";
+			address.textContent = bond.address;
+			row.insertCell().append(name, address);
 			row.insertCell().textContent = bond.connected ? "this device" : "";
 			remove.textContent = "Remove";
 			remove.className = "small";
@@ -536,9 +602,7 @@ export function initControls({ shell, onName, onForward }) {
 		setConnected(value) {
 			connected = value;
 			setEnabled(value);
-			if (!value) {
-				stopLive();
-			}
+			syncLive();
 		},
 	};
 }
