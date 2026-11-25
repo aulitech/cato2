@@ -155,9 +155,12 @@ const shell = new ShellRunner({
 	display: consoleWrite,
 });
 
-const orientation = initOrientation();
+const orientation = initOrientation({
+	setForward: (axis) => controls.setForward(axis),
+});
 const controls = initControls({
 	shell,
+	onForward: (axis) => orientation.showForward(axis),
 	onName: (name) => {
 		if (name) {
 			ui.deviceName.textContent = name;
@@ -246,6 +249,8 @@ async function openServices() {
 // gives it, so that a reload can pick it up again without asking.
 const DEVICE_KEY = "cato-device";
 const RECONNECT_EVERY_MS = 2000;
+const RECONNECT_FIRST_MS = 1000;
+const RECONNECT_ATTEMPT_MS = 15000;
 
 function rememberDevice(id) {
 	try {
@@ -293,16 +298,33 @@ async function reconnect() {
 	setStatus("connecting", "Reconnecting…");
 	updateControls();
 
+	// Not straight away: the browser is still taking the old connection down,
+	// and a connection asked for at that moment can hang for good.
+	await sleep(RECONNECT_FIRST_MS);
+
 	while (state.reconnect === attempt) {
+		let timer;
+
 		try {
-			await openServices();
-		} catch {
-			// Not back yet, or only half connected: start over shortly.
-			if (state.reconnect === attempt && device.gatt.connected) {
+			// An attempt that neither works nor fails is given up, and made again.
+			await Promise.race([
+				openServices(),
+				new Promise((resolve, reject) => {
+					timer = setTimeout(() => reject(new Error("Timed out")),
+							   RECONNECT_ATTEMPT_MS);
+				}),
+			]);
+		} catch (err) {
+			console.warn("Reconnecting:", err.message);
+			// Not back yet, hung, or only half connected: start over shortly.
+			// Disconnecting also abandons a connection still being made.
+			if (state.reconnect === attempt) {
 				device.gatt.disconnect();
 			}
 			await sleep(RECONNECT_EVERY_MS);
 			continue;
+		} finally {
+			clearTimeout(timer);
 		}
 		if (state.reconnect !== attempt) {
 			// Stopped while the connection was being made.

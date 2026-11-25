@@ -246,7 +246,8 @@ bt_nus:~$ hid mouse move 50 -20
 `hid` also lists, for each connected device, the connection interval, radio
 mode and MTU it negotiated.
 
-**Air mouse.** With the mouse report enabled and `hid air on`, turning the
+**Air mouse** (called **Pointer** in MyCato, where it goes on and off with
+the Mouse report). With the mouse report enabled and `hid air on`, turning the
 board moves the pointer, like a presentation remote. A hundred times a second
 the gyroscope's turn rates, with its zero offset removed, become relative
 mouse movement:
@@ -272,6 +273,9 @@ tipping the board's forward axis up or down moves it up or down.
   `+x -x +y -y +z -z` (default `+y`). This is the one thing gravity cannot
   tell. While that axis points within about 17 degrees of straight up or
   down, sideways has no meaning and the pointer holds still.
+  In MyCato this is set on the **Orientation** card: a screen is drawn on the
+  side of the board it is taken to be on, and clicking the dot on another
+  side moves it there.
 - `hid air axes <x> <y>` – fixed axes instead: the gyroscope axis that drives
   pointer X and the one that drives pointer Y, each with a sign. `-z -x` is
   what automatic gives for a board lying flat with forward `+y`.
@@ -350,7 +354,7 @@ It connects to the first board it finds; pass a name
 
 **MyCato, the web app** – a browser page with the console, a card of controls
 for every command above (name, restart, factory reset, blink, IMU, paired
-devices, sleep, mouse, keyboard and air mouse, bootloader), a live 3D view of
+devices, sleep, mouse and pointer, keyboard, bootloader), a live 3D view of
 the board's orientation and firmware upgrade, all over one Bluetooth
 connection. The
 controls run the same shell commands you would type, visibly in the console.

@@ -37,7 +37,7 @@ const LIVE_INTERVAL_MS = 400;
  * @param shell   ShellRunner
  * @param onName  (string) => void, called when the board's name is known
  */
-export function initControls({ shell, onName }) {
+export function initControls({ shell, onName, onForward }) {
 	const cards = document.querySelectorAll("#controls .card:not([data-card='firmware'])");
 	let connected = false;
 	let liveTimer = null;
@@ -371,6 +371,7 @@ export function initControls({ shell, onName }) {
 	fill($("hid-rate"), HID_RATE_OPTIONS);
 
 	const hidSwitches = {};
+	let airSupported = false; // firmware from before the air mouse has no such command
 
 	for (const [report, label] of HID_REPORTS) {
 		const wrapper = document.createElement("label");
@@ -381,6 +382,10 @@ export function initControls({ shell, onName }) {
 		box.addEventListener("change", () => act("hid", async () => {
 			try {
 				await shell.run(`hid ${box.checked ? "enable" : "disable"} ${report}`);
+				// The air mouse has no switch of its own: it goes with the mouse.
+				if (report === "mouse" && airSupported) {
+					await shell.run(`hid air ${box.checked ? "on" : "off"}`);
+				}
 			} finally {
 				await loadHid().catch(() => {});
 			}
@@ -395,9 +400,6 @@ export function initControls({ shell, onName }) {
 
 	fill($("air-axis-x"), AIR_AXES);
 	fill($("air-axis-y"), AIR_AXES);
-	fill($("air-forward"), ["+x", "-x", "+y", "-y", "+z", "-z"]
-		.map((axis) => [axis, `${axis[1].toUpperCase()}${axis[0] === "-" ? ", reversed" : ""}`]));
-
 	const airSetting = (id, command) => $(id).addEventListener("change", () => act("hid", async () => {
 		try {
 			await shell.run(command());
@@ -406,7 +408,6 @@ export function initControls({ shell, onName }) {
 		}
 	}, "Applied and saved."));
 
-	airSetting("air-on", () => `hid air ${$("air-on").checked ? "on" : "off"}`);
 	const airSpeed = () => `hid air speed ${$("air-speed-x").value} ${$("air-speed-y").value}`;
 
 	airSetting("air-speed-x", airSpeed);
@@ -418,7 +419,6 @@ export function initControls({ shell, onName }) {
 		`hid air axes ${$("air-axis-x").value || "-z"} ${$("air-axis-y").value || "-x"}`;
 
 	airSetting("air-mode", () => ($("air-mode").value === "auto" ? "hid air axes auto" : manualAxes()));
-	airSetting("air-forward", () => `hid air forward ${$("air-forward").value}`);
 	airSetting("air-axis-x", manualAxes);
 	airSetting("air-axis-y", manualAxes);
 
@@ -426,16 +426,17 @@ export function initControls({ shell, onName }) {
 		const hid = parseHid(await shell.run("hid"));
 		const rate = String(hid.rate);
 
+		airSupported = Boolean(hid.air);
+		// Shown, and set, on the orientation viewer.
+		onForward(hid.air ? hid.air.forward : null);
 		$("hid-air").hidden = !hid.air;
 		if (hid.air) {
-			$("air-on").checked = hid.air.on;
+			$("air-state").textContent = hid.air.on && hid.enabled.includes("mouse") ? "(on)" : "(off)";
 			$("air-speed-x").value = hid.air.speedX;
 			$("air-speed-y").value = hid.air.speedY;
 			$("air-accel").value = hid.air.accel;
 			$("air-deadzone").value = hid.air.deadzone;
 			$("air-mode").value = hid.air.auto ? "auto" : "manual";
-			$("air-forward").value = hid.air.forward;
-			$("air-auto").hidden = !hid.air.auto;
 			$("air-manual").hidden = hid.air.auto;
 			if (!hid.air.auto) {
 				$("air-axis-x").value = hid.air.axisX;
@@ -524,6 +525,14 @@ export function initControls({ shell, onName }) {
 
 	return {
 		refresh,
+		/** Sets the board axis that points at the screen, for the pointer. */
+		async setForward(axis) {
+			try {
+				await shell.run(`hid air forward ${axis}`);
+			} finally {
+				await loadHid().catch(() => {});
+			}
+		},
 		setConnected(value) {
 			connected = value;
 			setEnabled(value);

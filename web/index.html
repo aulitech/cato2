@@ -415,6 +415,38 @@ input[type="file"] { width: 100%; }
 #orientation-model .axis { position: absolute; font-size: 11px; font-weight: 600; opacity: 0.85; }
 #orientation-model .axis.x { right: 6px; top: 50%; transform: translateY(-50%); }
 #orientation-model .axis.y { top: 4px; left: 50%; transform: translateX(-50%); }
+/* Where the screen is, as the board sees it: one spot on each side of the
+   board, and the chosen one drawn as a screen. They always face the viewer. */
+#orientation-model .screen-spot {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 14px;
+	height: 14px;
+	margin: -7px 0 0 -7px;
+	padding: 0;
+	border: 1px solid var(--muted);
+	border-radius: 50%;
+	background: var(--panel);
+	opacity: 0.75;
+	font-size: 0;
+}
+#orientation-model .screen-spot:hover { border-color: var(--accent); opacity: 1; }
+#orientation-model .screen-spot[aria-pressed="true"] {
+	width: 46px;
+	height: 30px;
+	margin: -15px 0 0 -23px;
+	border: 2px solid var(--accent);
+	border-bottom-width: 5px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--accent) 25%, var(--panel));
+	color: var(--text);
+	opacity: 1;
+	font-size: 9px;
+	font-weight: 600;
+	cursor: default;
+}
+#orientation-model .screen-spot[hidden] { display: none; }
 #orientation-roll, #orientation-pitch, #orientation-yaw {
 	display: inline-block;
 	min-width: 3.2em;
@@ -744,9 +776,10 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 					<button id="hid-scroll-up" class="small" disabled>Scroll up</button>
 					<button id="hid-scroll-down" class="small" disabled>Scroll down</button>
 				</div>
-				<div id="hid-air" hidden>
+				<details id="hid-air" hidden>
+					<summary>Pointer <span id="air-state"></span></summary>
+					<div class="card-body">
 					<div class="row">
-						<label><input id="air-on" type="checkbox" disabled> Air mouse</label>
 						<label for="air-deadzone">Dead zone</label>
 						<input id="air-deadzone" type="number" min="0" max="20" disabled>
 						<span class="note">°/s</span>
@@ -769,10 +802,6 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 							<option value="manual">Fixed gyroscope axes</option>
 						</select>
 					</div>
-					<div class="row" id="air-auto">
-						<label for="air-forward">Board axis pointing at the screen</label>
-						<select id="air-forward" disabled></select>
-					</div>
 					<div class="row" id="air-manual" hidden>
 						<label for="air-axis-x">Pointer X from</label>
 						<select id="air-axis-x" disabled></select>
@@ -780,14 +809,16 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 						<select id="air-axis-y" disabled></select>
 					</div>
 					<p class="note">
-						Turning the board moves the pointer. Needs the mouse report on.
+						Turning the board moves the pointer. It is on whenever the Mouse
+						report above is.
 						Speed is pointer steps per degree, set separately for sideways (X) and
 						up-down (Y). With acceleration, slower turns than the rate given move
 						the pointer less than that and faster turns more. Automatic directions work however
-						the board is held, as long as it knows which of its axes points at
-						the screen.
+						the board is held, as long as it knows where the screen is: show it
+						on the Orientation card.
 					</p>
 				</div>
+				</details>
 				<div class="row">
 					<label for="hid-key">Key</label>
 					<input id="hid-key" class="grow mono" type="text" placeholder="enter, ctrl+c, shift+f5"
@@ -837,6 +868,11 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 					<span>Heading <strong id="orientation-yaw">–</strong></span>
 					<button id="orientation-zero" class="small" disabled>Face forward</button>
 				</div>
+				<p id="orientation-screen-note" class="note" hidden>
+					Point the board at the screen as you will use it. If the screen drawn
+					here is not where the real one is, click the dot that is: the pointer
+					then moves the right way however the board is held.
+				</p>
 				<p id="orientation-note" class="note"></p>
 			</div>
 		</section>
