@@ -58,6 +58,11 @@ int imu_arm_wake(uint32_t *threshold_mg);
 /* bonds.c: register the pairing policy. Call before Bluetooth is enabled. */
 int bonds_init(void);
 
+#include <zephyr/bluetooth/addr.h>
+
+/* bonds.c: the name given to a bonded device, or NULL if it has none. */
+const char *bonds_name(const bt_addr_le_t *addr);
+
 /* crash.c: log the crash that caused the previous restart, if any. */
 void crash_report(void);
 

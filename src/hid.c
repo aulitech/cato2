@@ -330,8 +330,70 @@ static const char *const report_names[INPUT_COUNT] = {
 #define SENSOR_REPORTS (BIT(INPUT_ACCEL) | BIT(INPUT_GYRO) | BIT(INPUT_ORIENTATION))
 #define ALL_REPORTS    BIT_MASK(INPUT_COUNT)
 
-/* Reports switched on with "hid enable" (bit per INPUT_ index). All off by default. */
-static atomic_t enabled;
+/*
+ * The settings are kept for each paired device (peer) separately: which
+ * reports it is sent, how often the sensor ones, and how the air mouse behaves
+ * for it. One host may want a mouse and another only the orientation.
+ *
+ * A peer without settings of its own has the defaults, which on a board
+ * upgraded from firmware with one set of settings for all are those settings.
+ */
+struct air_config {
+	uint8_t on;
+	uint8_t speed;    /* pointer X counts per degree turned */
+	uint8_t deadzone; /* turn rates below this many deg/s are ignored */
+	int8_t axis_x;    /* manual axes */
+	int8_t axis_y;
+	uint8_t manual;   /* 0: automatic axes */
+	int8_t forward;   /* the board axis that points at the screen */
+	uint8_t speed_y;  /* pointer Y counts per degree turned */
+	uint8_t accel;    /* turn rate (deg/s) at which the speeds apply; 0: no acceleration */
+} __packed;
+
+struct hid_profile {
+	uint8_t enabled; /* reports switched on with "hid enable", bit per INPUT_ index */
+	uint8_t rate;    /* sensor reports per second */
+	struct air_config air;
+} __packed;
+
+/* A peer's own settings. Stored as it is, under "hid/peer/<slot>". */
+struct peer_profile {
+	bt_addr_le_t addr;
+	uint8_t used;
+	struct hid_profile profile;
+} __packed;
+
+static struct hid_profile defaults = {
+	.enabled = 0,
+	.rate = SENSOR_RATE_DEFAULT,
+	.air = { .on = 0, .speed = 20, .deadzone = 2, .axis_x = -3, .axis_y = -1,
+		 .manual = 0, .forward = 2, .speed_y = 20, .accel = 60 },
+};
+
+static struct peer_profile peers[CONFIG_BT_MAX_PAIRED];
+
+static struct peer_profile *peer_find(const bt_addr_le_t *addr)
+{
+	ARRAY_FOR_EACH_PTR(peers, peer) {
+		if (peer->used && bt_addr_le_eq(&peer->addr, addr)) {
+			return peer;
+		}
+	}
+	return NULL;
+}
+
+/* The settings that apply to a peer: its own, or the defaults. */
+static const struct hid_profile *profile_of(const bt_addr_le_t *addr)
+{
+	const struct peer_profile *peer = peer_find(addr);
+
+	return peer != NULL ? &peer->profile : &defaults;
+}
+
+static const struct hid_profile *profile_for(struct bt_conn *conn)
+{
+	return profile_of(bt_conn_get_dst(conn));
+}
 
 /*
  * What a host has asked of each sensor through its property report. A sensor
@@ -350,19 +412,28 @@ static struct {
 /* Input reports that at least one host is currently subscribed to (bit per report). */
 static atomic_t subscribed;
 static atomic_t host_count;
-static atomic_t sensor_rate_hz = ATOMIC_INIT(SENSOR_RATE_DEFAULT);
+/* A report interval a host asked for in a property report; 0 if none has. */
+static atomic_t host_rate_hz;
 
-static bool report_enabled(int index)
+static bool report_enabled(const struct hid_profile *profile, int index)
 {
-	return atomic_test_bit(&enabled, index);
+	return (profile->enabled & BIT(index)) != 0;
+}
+
+static int sensor_rate(const struct hid_profile *profile)
+{
+	int asked = atomic_get(&host_rate_hz);
+
+	return asked != 0 ? asked : profile->rate;
 }
 
 /* A sensor report goes out if it is enabled and the host wants its events. */
-static bool sensor_wanted(int index)
+static bool sensor_wanted(const struct hid_profile *profile, int index)
 {
 	uint8_t reporting = host_request[index].reporting_state;
 
-	return report_enabled(index) && host_request[index].power_state != POWER_D4_OFF &&
+	return report_enabled(profile, index) &&
+	       host_request[index].power_state != POWER_D4_OFF &&
 	       reporting != REPORTING_NO_EVENTS && reporting != REPORTING_NO_EVENTS_WAKE;
 }
 static uint8_t keyboard_leds;
@@ -381,19 +452,6 @@ static uint8_t keyboard_leds;
 #define AIR_DEADZONE_MAX  20
 #define AIR_ACCEL_MAX     250
 
-static struct air_config {
-	uint8_t on;
-	uint8_t speed;    /* pointer X counts per degree turned */
-	uint8_t deadzone; /* turn rates below this many deg/s are ignored */
-	int8_t axis_x;    /* manual axes */
-	int8_t axis_y;
-	uint8_t manual;   /* 0: automatic axes */
-	int8_t forward;   /* the board axis that points at the screen */
-	uint8_t speed_y;  /* pointer Y counts per degree turned */
-	uint8_t accel;    /* turn rate (deg/s) at which the speeds apply; 0: no acceleration */
-} air = { .on = 0, .speed = 20, .deadzone = 2, .axis_x = -3, .axis_y = -1,
-	  .manual = 0, .forward = 2, .speed_y = 20, .accel = 60 };
-
 static bool air_config_valid(const struct air_config *config)
 {
 	return config->on <= 1 &&
@@ -406,39 +464,41 @@ static bool air_config_valid(const struct air_config *config)
 	       abs(config->forward) >= 1 && abs(config->forward) <= 3;
 }
 
-static bool air_active(void)
+static bool air_active(const struct hid_profile *profile)
 {
-	return air.on && report_enabled(INPUT_MOUSE);
+	return profile->air.on && report_enabled(profile, INPUT_MOUSE);
 }
 
 /* ------------------------------------------------------------- sending --- */
 
-struct report {
-	uint8_t index;
-	const uint8_t *data;
-	uint8_t len;
-	int sent;
-};
-
-static void send_to(struct bt_conn *conn, void *user_data)
+/* Sends an input report to one host. Fails if it has not subscribed to it. */
+static int send_to(struct bt_conn *conn, uint8_t index, const uint8_t *data, uint8_t len)
 {
-	struct report *report = user_data;
-
-	/* Fails for a host that has not subscribed to this report: ignored. */
-	if (bt_hids_inp_rep_send(report_route[report->index].service, conn,
-				 report_route[report->index].index, report->data, report->len,
-				 NULL) == 0) {
-		report->sent++;
-	}
+	return bt_hids_inp_rep_send(report_route[index].service, conn, report_route[index].index,
+				    data, len, NULL);
 }
 
-/* Sends an input report to every host. Returns how many accepted it. */
+/*
+ * The peer that "hid" commands are about: the one chosen with "hid peer", or
+ * the only one there is. See selected_peer().
+ */
+static bt_addr_le_t selected;
+static bool have_selected;
+
+/*
+ * Sends an input report to the selected peer, for the commands that act as a
+ * mouse or keyboard. Returns 1 if it took it, 0 if not (or not connected).
+ */
 static int send_report(uint8_t index, const uint8_t *data, uint8_t len)
 {
-	struct report report = { .index = index, .data = data, .len = len };
+	struct bt_conn *conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &selected);
+	int sent = 0;
 
-	bt_conn_foreach(BT_CONN_TYPE_LE, send_to, &report);
-	return report.sent;
+	if (conn != NULL) {
+		sent = send_to(conn, index, data, len) == 0;
+		bt_conn_unref(conn);
+	}
+	return sent;
 }
 
 int hid_connected(struct bt_conn *conn)
@@ -487,8 +547,9 @@ static void on_keyboard_leds(struct bt_hids_rep *rep, struct bt_conn *conn, bool
 }
 
 /* Reads or writes the property report of one sensor. */
-static void sensor_feature(int index, struct bt_hids_rep *rep, bool write)
+static void sensor_feature(int index, struct bt_hids_rep *rep, struct bt_conn *conn, bool write)
 {
+	const struct hid_profile *profile = conn != NULL ? profile_for(conn) : &defaults;
 	uint8_t *data = rep->data;
 
 	if (rep->size < SENSOR_FEATURE_LEN) {
@@ -503,7 +564,7 @@ static void sensor_feature(int index, struct bt_hids_rep *rep, bool write)
 
 		/* One rate serves all three sensors; zero means "your default". */
 		if (interval_ms != 0) {
-			atomic_set(&sensor_rate_hz,
+			atomic_set(&host_rate_hz,
 				   CLAMP(1000 / interval_ms, SENSOR_RATE_MIN, SENSOR_RATE_MAX));
 		}
 		return;
@@ -513,26 +574,28 @@ static void sensor_feature(int index, struct bt_hids_rep *rep, bool write)
 	data[FEATURE_CONNECTION_TYPE] = CONNECTION_PC_EXTERNAL;
 	data[FEATURE_REPORTING_STATE] = host_request[index].reporting_state;
 	data[FEATURE_POWER_STATE] = host_request[index].power_state;
-	data[FEATURE_SENSOR_STATE] = report_enabled(index) ? SENSOR_STATE_READY
-							  : SENSOR_STATE_NOT_AVAILABLE;
-	sys_put_le32(1000 / atomic_get(&sensor_rate_hz), &data[FEATURE_REPORT_INTERVAL]);
+	data[FEATURE_SENSOR_STATE] = report_enabled(profile, index) ? SENSOR_STATE_READY
+								   : SENSOR_STATE_NOT_AVAILABLE;
+	sys_put_le32(1000 / sensor_rate(profile), &data[FEATURE_REPORT_INTERVAL]);
 	sys_put_le16(0, &data[FEATURE_SENSITIVITY]);
 }
 
 static void on_accel_feature(struct bt_hids_rep *rep, struct bt_conn *conn, bool write)
 {
-	sensor_feature(INPUT_ACCEL, rep, write);
+	sensor_feature(INPUT_ACCEL, rep, conn, write);
 }
 
 static void on_gyro_feature(struct bt_hids_rep *rep, struct bt_conn *conn, bool write)
 {
-	sensor_feature(INPUT_GYRO, rep, write);
+	sensor_feature(INPUT_GYRO, rep, conn, write);
 }
 
 static void on_orientation_feature(struct bt_hids_rep *rep, struct bt_conn *conn, bool write)
 {
-	sensor_feature(INPUT_ORIENTATION, rep, write);
+	sensor_feature(INPUT_ORIENTATION, rep, conn, write);
 }
+
+static int peers_init(void);
 
 int hid_init(void)
 {
@@ -560,6 +623,11 @@ int hid_init(void)
 	pointer.outp_rep_group_init.reports[0].size = KEYBOARD_LED_LEN;
 	pointer.outp_rep_group_init.reports[0].handler = on_keyboard_leds;
 	pointer.outp_rep_group_init.cnt = 1;
+
+	err = peers_init();
+	if (err) {
+		return err;
+	}
 
 	err = bt_hids_init(&pointer_hids, &pointer);
 	if (err) {
@@ -717,30 +785,32 @@ static int16_t to_int16(float value)
 	return (int16_t)CLAMP(lroundf(value), -32767, 32767);
 }
 
-static void send_sensor_reports(const float accel_g[3], const float gyro_dps[3])
+/* Sends one host the sensor reports that are on for it. */
+static void send_sensor_reports(struct bt_conn *conn, const struct hid_profile *profile,
+				const float accel_g[3], const float gyro_dps[3])
 {
 	uint8_t report[ORIENTATION_REPORT_LEN] = { SENSOR_STATE_READY, SENSOR_EVENT_DATA_UPDATED };
 	const float quaternion[4] = { q.x, q.y, q.z, q.w };
 
-	if (sensor_wanted(INPUT_ACCEL)) {
+	if (sensor_wanted(profile, INPUT_ACCEL)) {
 		for (int i = 0; i < 3; i++) {
 			sys_put_le16(to_int16(accel_g[i] * 1000.0f), &report[2 + 2 * i]);
 		}
-		send_report(INPUT_ACCEL, report, SENSOR3_REPORT_LEN);
+		(void)send_to(conn, INPUT_ACCEL, report, SENSOR3_REPORT_LEN);
 	}
 
-	if (sensor_wanted(INPUT_GYRO)) {
+	if (sensor_wanted(profile, INPUT_GYRO)) {
 		for (int i = 0; i < 3; i++) {
 			sys_put_le16(to_int16(gyro_dps[i] * 10.0f), &report[2 + 2 * i]);
 		}
-		send_report(INPUT_GYRO, report, SENSOR3_REPORT_LEN);
+		(void)send_to(conn, INPUT_GYRO, report, SENSOR3_REPORT_LEN);
 	}
 
-	if (sensor_wanted(INPUT_ORIENTATION)) {
+	if (sensor_wanted(profile, INPUT_ORIENTATION)) {
 		for (int i = 0; i < 4; i++) {
 			sys_put_le16(to_int16(quaternion[i] * 10000.0f), &report[2 + 2 * i]);
 		}
-		send_report(INPUT_ORIENTATION, report, ORIENTATION_REPORT_LEN);
+		(void)send_to(conn, INPUT_ORIENTATION, report, ORIENTATION_REPORT_LEN);
 	}
 }
 
@@ -785,8 +855,13 @@ static void send_orientation_stream(void)
 	(void)bt_gatt_notify(NULL, &orientation_service.attrs[1], value, sizeof(value));
 }
 
-/* Movement not sent yet: the fractions of a count left over from each sample. */
-static float air_pending[2];
+/* What is kept for each connection while the sensors are running. */
+static struct {
+	/* Movement not sent yet: the fractions of a count left over from each sample. */
+	float air_pending[2];
+	/* Counts up to the next sensor report, at this host's rate. */
+	int since_report;
+} link_state[CONFIG_BT_MAX_CONN];
 
 static float air_rate(const float turn_dps[3], int8_t axis)
 {
@@ -854,7 +929,7 @@ static void up_update(const float turn_dps[3], const float accel_g[3], float dt)
  * false while they cannot be told: forward is pointing nearly straight up or
  * down, or up is not known yet.
  */
-static bool air_auto_rates(const float turn_dps[3], float rate[2])
+static bool air_auto_rates(const struct air_config *air, const float turn_dps[3], float rate[2])
 {
 	float forward[3] = { 0.0f, 0.0f, 0.0f };
 	float right[3];
@@ -863,7 +938,7 @@ static bool air_auto_rates(const float turn_dps[3], float rate[2])
 	if (!up_known) {
 		return false;
 	}
-	forward[abs(air.forward) - 1] = air.forward < 0 ? -1.0f : 1.0f;
+	forward[abs(air->forward) - 1] = air->forward < 0 ? -1.0f : 1.0f;
 
 	/* Forward x up points to the right, and is shorter the steeper forward is. */
 	right[0] = forward[1] * up[2] - forward[2] * up[1];
@@ -883,19 +958,24 @@ static bool air_auto_rates(const float turn_dps[3], float rate[2])
 	return true;
 }
 
-/* Turns one sample's turn rates (deg/s, zero offset removed) into pointer movement. */
-static void air_update(const float turn_dps[3], float dt)
+/*
+ * Turns one sample's turn rates (deg/s, zero offset removed) into pointer
+ * movement for one host, with that host's settings.
+ */
+static void air_update(struct bt_conn *conn, const struct air_config *air,
+		       const float turn_dps[3], float dt)
 {
+	float *air_pending = link_state[bt_conn_index(conn)].air_pending;
 	uint8_t report[MOUSE_REPORT_LEN] = { 0 };
 	float rate[2];
 	float speed;
 	float gain;
 	int16_t move[2];
 
-	if (air.manual) {
-		rate[0] = air_rate(turn_dps, air.axis_x);
-		rate[1] = air_rate(turn_dps, air.axis_y);
-	} else if (!air_auto_rates(turn_dps, rate)) {
+	if (air->manual) {
+		rate[0] = air_rate(turn_dps, air->axis_x);
+		rate[1] = air_rate(turn_dps, air->axis_y);
+	} else if (!air_auto_rates(air, turn_dps, rate)) {
 		return;
 	}
 	speed = sqrtf(rate[0] * rate[0] + rate[1] * rate[1]);
@@ -905,22 +985,22 @@ static void air_update(const float turn_dps[3], float dt)
 	 * pointer. Subtracting it, rather than cutting off below it, lets
 	 * movement start from zero instead of with a jump.
 	 */
-	if (speed <= air.deadzone) {
+	if (speed <= air->deadzone) {
 		return;
 	}
 	/* Same direction as the turn, at the turn rate that is left above the dead zone. */
-	gain = (speed - air.deadzone) / speed;
+	gain = (speed - air->deadzone) / speed;
 	/*
 	 * Acceleration: the pointer speed grows with the square of the turn rate
 	 * instead of in step with it, so slow turns are fine and precise and fast
 	 * ones cross the screen. At the reference rate it is what it would be
 	 * without acceleration; at half that rate a half, at twice that rate double.
 	 */
-	if (air.accel != 0) {
-		gain *= (speed - air.deadzone) / air.accel;
+	if (air->accel != 0) {
+		gain *= (speed - air->deadzone) / air->accel;
 	}
 	for (int i = 0; i < 2; i++) {
-		air_pending[i] += rate[i] * gain * dt * (i == 0 ? air.speed : air.speed_y);
+		air_pending[i] += rate[i] * gain * dt * (i == 0 ? air->speed : air->speed_y);
 		move[i] = to_int16(truncf(air_pending[i]));
 	}
 	if (move[0] == 0 && move[1] == 0) {
@@ -929,12 +1009,49 @@ static void air_update(const float turn_dps[3], float dt)
 
 	sys_put_le16(move[0], &report[1]);
 	sys_put_le16(move[1], &report[3]);
-	if (send_report(INPUT_MOUSE, report, sizeof(report)) > 0) {
+	if (send_to(conn, INPUT_MOUSE, report, sizeof(report)) == 0) {
 		air_pending[0] -= move[0];
 		air_pending[1] -= move[1];
 	} else {
 		/* Nobody to move a pointer for: do not save the movement up. */
 		air_pending[0] = air_pending[1] = 0.0f;
+	}
+}
+
+/* Whether any connected host is to be sent sensor reports or pointer movement. */
+static void check_wanted(struct bt_conn *conn, void *user_data)
+{
+	const struct hid_profile *profile = profile_for(conn);
+	bool *wanted = user_data;
+
+	if (air_active(profile) || sensor_wanted(profile, INPUT_ACCEL) ||
+	    sensor_wanted(profile, INPUT_GYRO) || sensor_wanted(profile, INPUT_ORIENTATION)) {
+		*wanted = true;
+	}
+}
+
+struct sample {
+	const float *accel_g;
+	const float *gyro_dps;
+	const float *turn_dps;
+	float dt;
+};
+
+/* One sample's worth of reports for one host, by that host's settings. */
+static void report_sample(struct bt_conn *conn, void *user_data)
+{
+	const struct hid_profile *profile = profile_for(conn);
+	const struct sample *sample = user_data;
+	int *since_report = &link_state[bt_conn_index(conn)].since_report;
+
+	if (air_active(profile)) {
+		air_update(conn, &profile->air, sample->turn_dps, sample->dt);
+	}
+
+	*since_report += sensor_rate(profile);
+	if (*since_report >= SAMPLE_HZ) {
+		*since_report -= SAMPLE_HZ;
+		send_sensor_reports(conn, profile, sample->accel_g, sample->gyro_dps);
 	}
 }
 
@@ -944,18 +1061,17 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 	int64_t next = k_uptime_get();
 	int64_t last_sample = 0;
 	bool streaming = false;
-	int since_report = 0;
 	int since_stream = 0;
 
 	while (1) {
-		int rate = atomic_get(&sensor_rate_hz);
 		float accel_g[3];
 		float gyro_dps[3];
+		bool wanted = atomic_get(&stream_wanted) != 0;
 
-		if (atomic_get(&host_count) == 0 ||
-		    !(sensor_wanted(INPUT_ACCEL) || sensor_wanted(INPUT_GYRO) ||
-		      sensor_wanted(INPUT_ORIENTATION) || air_active() ||
-		      atomic_get(&stream_wanted))) {
+		if (atomic_get(&host_count) != 0 && !wanted) {
+			bt_conn_foreach(BT_CONN_TYPE_LE, check_wanted, &wanted);
+		}
+		if (atomic_get(&host_count) == 0 || !wanted) {
 			streaming = false;
 			k_msleep(200);
 			continue;
@@ -963,12 +1079,11 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 
 		if (!streaming) {
 			streaming = true;
-			since_report = 0;
+			memset(link_state, 0, sizeof(link_state));
 			next = k_uptime_get();
 			last_sample = next - 1000 / SAMPLE_HZ;
 			fusion_reset();
 			bias_reset_window();
-			air_pending[0] = air_pending[1] = 0.0f;
 			up_known = false;
 		}
 
@@ -997,15 +1112,12 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 			}
 
 			up_update(turn_dps, accel_g, dt);
-			if (air_active()) {
-				air_update(turn_dps, dt);
-			}
 
-			since_report += rate;
-			if (since_report >= SAMPLE_HZ) {
-				since_report -= SAMPLE_HZ;
-				send_sensor_reports(accel_g, gyro_dps);
-			}
+			struct sample sample = {
+				.accel_g = accel_g, .gyro_dps = gyro_dps, .turn_dps = turn_dps, .dt = dt,
+			};
+
+			bt_conn_foreach(BT_CONN_TYPE_LE, report_sample, &sample);
 		}
 
 		next += 1000 / SAMPLE_HZ;
@@ -1025,12 +1137,37 @@ K_THREAD_DEFINE(hid_sensor_tid, 2048, sensor_thread, NULL, NULL, NULL,
 static int hid_settings_set(const char *name, size_t len, settings_read_cb read_cb,
 			    void *cb_arg)
 {
+	const char *slot;
 	uint8_t value;
 	ssize_t rc;
 
+	if (settings_name_steq(name, "peer", &slot) && slot != NULL) {
+		struct peer_profile stored = { .profile = defaults };
+		int index = atoi(slot);
+
+		if (index < 0 || index >= ARRAY_SIZE(peers) || len > sizeof(stored)) {
+			return 0;
+		}
+		rc = read_cb(cb_arg, &stored, len);
+		if (rc < 0) {
+			return rc;
+		}
+		stored.profile.enabled &= ALL_REPORTS;
+		if (stored.used == 1 && air_config_valid(&stored.profile.air) &&
+		    stored.profile.rate >= SENSOR_RATE_MIN &&
+		    stored.profile.rate <= SENSOR_RATE_MAX) {
+			peers[index] = stored;
+		}
+		return 0;
+	}
+
+	/*
+	 * The rest are the settings of firmware that had one set for every
+	 * host. They are not written any more, and serve as the defaults.
+	 */
 	if (settings_name_steq(name, "air", NULL)) {
 		/* Fields added since it was saved keep their defaults. */
-		struct air_config stored = air;
+		struct air_config stored = defaults.air;
 
 		if (len > sizeof(stored)) {
 			return -EINVAL;
@@ -1044,7 +1181,7 @@ static int hid_settings_set(const char *name, size_t len, settings_read_cb read_
 			stored.speed_y = stored.speed;
 		}
 		if (air_config_valid(&stored)) {
-			air = stored;
+			defaults.air = stored;
 		}
 		return 0;
 	}
@@ -1058,12 +1195,12 @@ static int hid_settings_set(const char *name, size_t len, settings_read_cb read_
 	}
 
 	if (settings_name_steq(name, "enabled", NULL)) {
-		atomic_set(&enabled, value & ALL_REPORTS);
+		defaults.enabled = value & ALL_REPORTS;
 		return 0;
 	}
 	if (settings_name_steq(name, "rate", NULL)) {
 		if (value >= SENSOR_RATE_MIN && value <= SENSOR_RATE_MAX) {
-			atomic_set(&sensor_rate_hz, value);
+			defaults.rate = value;
 		}
 		return 0;
 	}
@@ -1156,15 +1293,183 @@ static bool tap_key(uint8_t modifiers, uint8_t usage)
 
 /* --------------------------------------------------------------- shell --- */
 
+/*
+ * The commands are about one peer, by its number in the "bonds" list:
+ *
+ *   hid peer <number>   chooses it; it stays chosen until another is
+ *   hid peer            shows which it is
+ *
+ * With only one device paired there is nothing to choose.
+ */
+struct bond_lookup {
+	int index;       /* counts the bonds, in the order "bonds" lists them */
+	int wanted;      /* the number to find, or 0 to find an address */
+	const bt_addr_le_t *addr;
+	bt_addr_le_t found;
+	int found_index; /* 0: not found */
+};
+
+static void lookup_bond(const struct bt_bond_info *info, void *user_data)
+{
+	struct bond_lookup *lookup = user_data;
+
+	lookup->index++;
+	if (lookup->wanted != 0 ? lookup->index == lookup->wanted
+				: lookup->addr != NULL && bt_addr_le_eq(&info->addr, lookup->addr)) {
+		bt_addr_le_copy(&lookup->found, &info->addr);
+		lookup->found_index = lookup->index;
+	}
+}
+
+/*
+ * Makes sure a peer is selected and still paired. Returns its number in the
+ * "bonds" list, or 0 after telling the user what is missing.
+ */
+static int selected_peer(const struct shell *sh)
+{
+	struct bond_lookup lookup = { .addr = have_selected ? &selected : NULL };
+
+	bt_foreach_bond(BT_ID_DEFAULT, lookup_bond, &lookup);
+	if (lookup.found_index != 0) {
+		return lookup.found_index;
+	}
+
+	have_selected = false;
+	if (lookup.index == 1) {
+		/* The only one there is. */
+		lookup = (struct bond_lookup){ .wanted = 1 };
+		bt_foreach_bond(BT_ID_DEFAULT, lookup_bond, &lookup);
+		bt_addr_le_copy(&selected, &lookup.found);
+		have_selected = true;
+		return 1;
+	}
+
+	if (lookup.index == 0) {
+		shell_error(sh, "No device is paired yet");
+	} else {
+		shell_error(sh, "%d devices are paired. Choose one with: hid peer <number> "
+				"(see \"bonds\")", lookup.index);
+	}
+	return 0;
+}
+
+/* The settings the command under way reads, and changes if it began with edit_begin(). */
+static struct hid_profile *edit;
+static struct peer_profile *edit_peer;
+
+/* For a command that only reads the selected peer's settings. */
+static bool view_begin(const struct shell *sh)
+{
+	if (selected_peer(sh) == 0) {
+		return false;
+	}
+	edit_peer = peer_find(&selected);
+	edit = edit_peer != NULL ? &edit_peer->profile : &defaults;
+	return true;
+}
+
+static void find_unbonded(const struct bt_bond_info *info, void *user_data)
+{
+	ARRAY_FOR_EACH_PTR(peers, peer) {
+		if (peer->used == 1 && bt_addr_le_eq(&peer->addr, &info->addr)) {
+			peer->used = 2; /* marked: still bonded */
+		}
+	}
+}
+
+/*
+ * For a command that changes the selected peer's settings: gives the peer
+ * settings of its own, starting from the defaults, if it had none.
+ */
+static bool edit_begin(const struct shell *sh)
+{
+	if (!view_begin(sh)) {
+		return false;
+	}
+	if (edit_peer != NULL) {
+		return true;
+	}
+
+	ARRAY_FOR_EACH_PTR(peers, peer) {
+		if (!peer->used) {
+			edit_peer = peer;
+			break;
+		}
+	}
+	if (edit_peer == NULL) {
+		/* Full of peers that are no longer paired: take one of theirs. */
+		bt_foreach_bond(BT_ID_DEFAULT, find_unbonded, NULL);
+		ARRAY_FOR_EACH_PTR(peers, peer) {
+			if (peer->used == 1 && edit_peer == NULL) {
+				edit_peer = peer;
+			}
+			peer->used = peer->used != 0;
+		}
+	}
+	if (edit_peer == NULL) {
+		shell_error(sh, "No room for this device's settings");
+		return false;
+	}
+
+	bt_addr_le_copy(&edit_peer->addr, &selected);
+	edit_peer->profile = defaults;
+	edit_peer->used = 1;
+	edit = &edit_peer->profile;
+	return true;
+}
+
+static int peer_store(const struct peer_profile *peer)
+{
+	char key[sizeof("hid/peer/") + 3];
+
+	snprintf(key, sizeof(key), "hid/peer/%u", (unsigned int)(peer - peers) & 0xff);
+
+	return peer->used ? settings_save_one(key, peer, sizeof(*peer)) : settings_delete(key);
+}
+
+/* Saves what a command that began with edit_begin() changed. */
+static int edit_save(const struct shell *sh)
+{
+	int err = peer_store(edit_peer);
+
+	if (err) {
+		shell_error(sh, "Applied, but not saved (err %d)", err);
+	}
+	return err;
+}
+
+/* A removed bond takes its settings with it. */
+static void peer_bond_deleted(uint8_t id, const bt_addr_le_t *addr)
+{
+	struct peer_profile *peer = peer_find(addr);
+
+	if (peer != NULL) {
+		peer->used = 0;
+		(void)peer_store(peer);
+	}
+	if (have_selected && bt_addr_le_eq(&selected, addr)) {
+		have_selected = false;
+	}
+}
+
+static struct bt_conn_auth_info_cb peer_callbacks = {
+	.bond_deleted = peer_bond_deleted,
+};
+
+static int peers_init(void)
+{
+	return bt_conn_auth_info_cb_register(&peer_callbacks);
+}
+
 static int no_host(const struct shell *sh)
 {
-	shell_error(sh, "No HID host is connected and listening");
+	shell_error(sh, "The device is not connected, or not listening as a HID host");
 	return -ENOTCONN;
 }
 
 static bool check_enabled(const struct shell *sh, int index)
 {
-	if (!report_enabled(index)) {
+	if (!report_enabled(edit, index)) {
 		shell_error(sh, "The %s report is off. Turn it on with: hid enable %s",
 			    report_names[index], report_names[index]);
 		return false;
@@ -1172,11 +1477,11 @@ static bool check_enabled(const struct shell *sh, int index)
 	return true;
 }
 
-static void list_reports(char *out, size_t size, atomic_t *bits, int first_bit)
+static void list_reports(char *out, size_t size, uint32_t bits, int first_bit)
 {
 	out[0] = '\0';
 	for (int i = 0; i < INPUT_COUNT; i++) {
-		if (atomic_test_bit(bits, first_bit + i)) {
+		if (bits & BIT(first_bit + i)) {
 			strncat(out, " ", size - strlen(out) - 1);
 			strncat(out, report_names[i], size - strlen(out) - 1);
 		}
@@ -1215,28 +1520,71 @@ static void print_air(const struct shell *sh)
 	char forward[3];
 	char axes[8] = "auto";
 
-	axis_name(air.axis_x, x);
-	axis_name(air.axis_y, y);
-	axis_name(air.forward, forward);
-	if (air.manual) {
+	axis_name(edit->air.axis_x, x);
+	axis_name(edit->air.axis_y, y);
+	axis_name(edit->air.forward, forward);
+	if (edit->air.manual) {
 		snprintf(axes, sizeof(axes), "%s %s", x, y);
 	}
 	shell_print(sh, "air mouse %s, speed %u %u, accel %u deg/s, dead zone %u deg/s, "
 			"axes %s, forward %s",
-		    air.on ? "on" : "off", air.speed, air.speed_y, air.accel, air.deadzone, axes,
+		    edit->air.on ? "on" : "off", edit->air.speed, edit->air.speed_y, edit->air.accel, edit->air.deadzone, axes,
 		    forward);
+}
+
+/* Which peer the commands are about, and whether its settings are its own. */
+static void print_peer(const struct shell *sh)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	const char *name = bonds_name(&selected);
+
+	bt_addr_le_to_str(&selected, addr, sizeof(addr));
+	shell_print(sh, "peer %d  %s%s%s%s, %s settings", selected_peer(sh), addr,
+		    name ? "  \"" : "", name ? name : "", name ? "\"" : "",
+		    edit_peer != NULL ? "own" : "default");
+}
+
+static int cmd_peer(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc == 2) {
+		struct bond_lookup lookup = { 0 };
+		int err = 0;
+
+		lookup.wanted = shell_strtol(argv[1], 10, &err);
+		if (err || lookup.wanted < 1) {
+			shell_error(sh, "Give a bond number from the \"bonds\" list");
+			return -EINVAL;
+		}
+		bt_foreach_bond(BT_ID_DEFAULT, lookup_bond, &lookup);
+		if (lookup.found_index == 0) {
+			shell_error(sh, "No bond %d", lookup.wanted);
+			return -ENOENT;
+		}
+		bt_addr_le_copy(&selected, &lookup.found);
+		have_selected = true;
+	}
+
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
+	print_peer(sh);
+	return 0;
 }
 
 static int cmd_hid(const struct shell *sh, size_t argc, char **argv)
 {
 	char list[48];
 
-	list_reports(list, sizeof(list), &enabled, 0);
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
+	print_peer(sh);
+	list_reports(list, sizeof(list), edit->enabled, 0);
 	shell_print(sh, "enabled:%s", list);
 	/* Subscriptions are tracked by report ID, which starts at 1. */
-	list_reports(list, sizeof(list), &subscribed, REPORT_ID_MOUSE);
+	list_reports(list, sizeof(list), atomic_get(&subscribed), REPORT_ID_MOUSE);
 	shell_print(sh, "hosts %d, listening to:%s", (int)atomic_get(&host_count), list);
-	shell_print(sh, "sensor rate %d Hz", (int)atomic_get(&sensor_rate_hz));
+	shell_print(sh, "sensor rate %d Hz", edit->rate);
 	shell_print(sh, "keyboard LEDs 0x%02x", keyboard_leds);
 	print_air(sh);
 	bt_conn_foreach(BT_CONN_TYPE_LE, print_link, (void *)sh);
@@ -1247,8 +1595,6 @@ static int cmd_hid(const struct shell *sh, size_t argc, char **argv)
 static int set_enabled(const struct shell *sh, const char *name, bool on)
 {
 	uint32_t mask = strcmp(name, "all") == 0 ? ALL_REPORTS : 0;
-	uint8_t value;
-	int err;
 
 	for (int i = 0; i < INPUT_COUNT; i++) {
 		if (strcmp(name, report_names[i]) == 0) {
@@ -1259,19 +1605,16 @@ static int set_enabled(const struct shell *sh, const char *name, bool on)
 		shell_error(sh, "Report must be mouse, keyboard, accel, gyro, orientation or all");
 		return -EINVAL;
 	}
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
 
 	if (on) {
-		atomic_or(&enabled, mask);
+		edit->enabled |= mask;
 	} else {
-		atomic_and(&enabled, ~mask);
+		edit->enabled &= ~mask;
 	}
-
-	value = atomic_get(&enabled);
-	err = settings_save_one("hid/enabled", &value, sizeof(value));
-	if (err) {
-		shell_error(sh, "Applied, but not saved (err %d)", err);
-	}
-	return err;
+	return edit_save(sh);
 }
 
 static int cmd_enable(const struct shell *sh, size_t argc, char **argv)
@@ -1291,6 +1634,9 @@ static int cmd_mouse_move(const struct shell *sh, size_t argc, char **argv)
 	long dx = shell_strtol(argv[1], 10, &err);
 	long dy = shell_strtol(argv[2], 10, &err);
 
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
 	if (!check_enabled(sh, INPUT_MOUSE)) {
 		return -EACCES;
 	}
@@ -1311,6 +1657,9 @@ static int cmd_mouse_click(const struct shell *sh, size_t argc, char **argv)
 	uint8_t report[MOUSE_REPORT_LEN] = { BIT(0) };
 	bool sent;
 
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
 	if (!check_enabled(sh, INPUT_MOUSE)) {
 		return -EACCES;
 	}
@@ -1341,6 +1690,9 @@ static int cmd_mouse_scroll(const struct shell *sh, size_t argc, char **argv)
 	int err = 0;
 	long steps = shell_strtol(argv[1], 10, &err);
 
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
 	if (!check_enabled(sh, INPUT_MOUSE)) {
 		return -EACCES;
 	}
@@ -1361,6 +1713,9 @@ static int cmd_key(const struct shell *sh, size_t argc, char **argv)
 	uint8_t usage = 0;
 	char *part = argv[1];
 
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
 	if (!check_enabled(sh, INPUT_KEYBOARD)) {
 		return -EACCES;
 	}
@@ -1406,6 +1761,9 @@ static int cmd_key(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_type(const struct shell *sh, size_t argc, char **argv)
 {
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
 	if (!check_enabled(sh, INPUT_KEYBOARD)) {
 		return -EACCES;
 	}
@@ -1445,44 +1803,44 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 		return -EINVAL;
 	}
 
-	atomic_set(&sensor_rate_hz, rate);
-
-	err = settings_save_one("hid/rate", &rate, sizeof(rate));
-	if (err) {
-		shell_error(sh, "Applied, but not saved (err %d)", err);
+	if (!edit_begin(sh)) {
+		return -ENOENT;
 	}
-	return err;
+	edit->rate = rate;
+	/* What a host asked for no longer stands in the way. */
+	atomic_set(&host_rate_hz, 0);
+	return edit_save(sh);
 }
 
-static int save_air(const struct shell *sh)
-{
-	int err = settings_save_one("hid/air", &air, sizeof(air));
-
-	if (err) {
-		shell_error(sh, "Applied, but not saved (err %d)", err);
-	}
-	return err;
-}
 
 static int cmd_air(const struct shell *sh, size_t argc, char **argv)
 {
+	if (!view_begin(sh)) {
+		return -ENOENT;
+	}
 	print_air(sh);
 	return 0;
 }
 
 static int cmd_air_on(const struct shell *sh, size_t argc, char **argv)
 {
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
 	if (!check_enabled(sh, INPUT_MOUSE)) {
 		return -EACCES;
 	}
-	air.on = 1;
-	return save_air(sh);
+	edit->air.on = 1;
+	return edit_save(sh);
 }
 
 static int cmd_air_off(const struct shell *sh, size_t argc, char **argv)
 {
-	air.on = 0;
-	return save_air(sh);
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
+	edit->air.on = 0;
+	return edit_save(sh);
 }
 
 static int cmd_air_speed(const struct shell *sh, size_t argc, char **argv)
@@ -1498,9 +1856,12 @@ static int cmd_air_speed(const struct shell *sh, size_t argc, char **argv)
 			    AIR_SPEED_MIN, AIR_SPEED_MAX);
 		return -EINVAL;
 	}
-	air.speed = x;
-	air.speed_y = y;
-	return save_air(sh);
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
+	edit->air.speed = x;
+	edit->air.speed_y = y;
+	return edit_save(sh);
 }
 
 static int cmd_air_accel(const struct shell *sh, size_t argc, char **argv)
@@ -1513,8 +1874,11 @@ static int cmd_air_accel(const struct shell *sh, size_t argc, char **argv)
 				"at the set speed, or 0 for no acceleration", AIR_ACCEL_MAX);
 		return -EINVAL;
 	}
-	air.accel = value;
-	return save_air(sh);
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
+	edit->air.accel = value;
+	return edit_save(sh);
 }
 
 static int cmd_air_deadzone(const struct shell *sh, size_t argc, char **argv)
@@ -1526,8 +1890,11 @@ static int cmd_air_deadzone(const struct shell *sh, size_t argc, char **argv)
 		shell_error(sh, "Dead zone must be 0 to %d (deg/s)", AIR_DEADZONE_MAX);
 		return -EINVAL;
 	}
-	air.deadzone = value;
-	return save_air(sh);
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
+	edit->air.deadzone = value;
+	return edit_save(sh);
 }
 
 /* "x", "+x", "-x" and so on: 0 if the text is not an axis. */
@@ -1550,19 +1917,22 @@ static int cmd_air_axes(const struct shell *sh, size_t argc, char **argv)
 	int8_t x = parse_axis(argv[1]);
 	int8_t y = argc == 3 ? parse_axis(argv[2]) : 0;
 
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
 	if (argc == 2 && strcmp(argv[1], "auto") == 0) {
-		air.manual = 0;
-		return save_air(sh);
+		edit->air.manual = 0;
+		return edit_save(sh);
 	}
 	if (x == 0 || y == 0) {
 		shell_error(sh, "Give auto, or the gyroscope axis for pointer X and for "
 				"pointer Y, each one of: +x -x +y -y +z -z");
 		return -EINVAL;
 	}
-	air.axis_x = x;
-	air.axis_y = y;
-	air.manual = 1;
-	return save_air(sh);
+	edit->air.axis_x = x;
+	edit->air.axis_y = y;
+	edit->air.manual = 1;
+	return edit_save(sh);
 }
 
 static int cmd_air_forward(const struct shell *sh, size_t argc, char **argv)
@@ -1574,8 +1944,11 @@ static int cmd_air_forward(const struct shell *sh, size_t argc, char **argv)
 				"+x -x +y -y +z -z");
 		return -EINVAL;
 	}
-	air.forward = forward;
-	return save_air(sh);
+	if (!edit_begin(sh)) {
+		return -ENOENT;
+	}
+	edit->air.forward = forward;
+	return edit_save(sh);
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(air_cmds,
@@ -1603,6 +1976,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(mouse_cmds,
 );
 
 SHELL_STATIC_SUBCMD_SET_CREATE(hid_cmds,
+	SHELL_CMD_ARG(peer, NULL, "[number]  Show or choose the paired device the other "
+		      "commands are about, by its number in \"bonds\"", cmd_peer, 1, 1),
 	SHELL_CMD_ARG(enable, NULL, "<mouse|keyboard|accel|gyro|orientation|all>  Turn a report on",
 		      cmd_enable, 2, 0),
 	SHELL_CMD_ARG(disable, NULL, "<mouse|keyboard|accel|gyro|orientation|all>  Turn a report off",

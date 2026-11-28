@@ -223,6 +223,16 @@ two more devices can still connect for the console and OTA.
 | 4 Gyroscope | HID Sensor *Gyrometer 3D*: X, Y, Z in tenths of a degree per second |
 | 5 Orientation | HID Sensor *Device Orientation*: quaternion x, y, z, w, scaled by 10000 |
 
+**The settings are kept for each paired device separately**: which reports it
+is sent, how often the sensor ones, and how the air mouse behaves for it. One
+computer can use the board as a mouse while another is sent only its
+orientation. `hid peer <number>` chooses the device the other `hid` commands
+are about, by its number in the `bonds` list, and `hid peer` shows it; with
+only one device paired there is nothing to choose. The commands that act as a
+mouse or keyboard (`hid mouse`, `hid key`, `hid type`) go to that device alone.
+A device's settings go when its bond is removed. On a board upgraded from
+firmware that had one set of settings for all, every device starts with those.
+
 **Every report is off until you switch it on**, and the choice is kept across
 resets:
 
@@ -230,6 +240,7 @@ resets:
 Cato_1A2B:~$ hid enable mouse
 Cato_1A2B:~$ hid enable orientation
 Cato_1A2B:~$ hid
+peer 1  80:A9:97:09:B1:31 (public)  "Office Mac", own settings
 enabled: mouse orientation
 hosts 1, listening to: mouse keyboard accel gyro orientation
 sensor rate 50 Hz
@@ -239,6 +250,7 @@ link: interval 15.00 ms, 2M, MTU 498
 Cato_1A2B:~$ hid mouse move 50 -20
 ```
 
+- `hid peer [number]` – show or choose the paired device the commands are about
 - `hid enable <report|all>`, `hid disable <report|all>` – `mouse`, `keyboard`,
   `accel`, `gyro`, `orientation`
 - `hid rate <Hz>` – rate of the sensor reports, 1 to 100 Hz (default 50)

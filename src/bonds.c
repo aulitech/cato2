@@ -59,6 +59,13 @@ static struct bond_name *bond_name_find(const bt_addr_le_t *addr)
 	return NULL;
 }
 
+const char *bonds_name(const bt_addr_le_t *addr)
+{
+	const struct bond_name *entry = bond_name_find(addr);
+
+	return entry != NULL ? entry->name : NULL;
+}
+
 static int bond_name_store(const struct bond_name *entry)
 {
 	char key[sizeof("app/bond/") + 3];
