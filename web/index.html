@@ -80,6 +80,8 @@ try {
 :root[data-theme="light"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
+/* Hidden means hidden, whatever display a class gives the element. */
+[hidden] { display: none !important; }
 
 body {
 	display: flex;
@@ -169,7 +171,7 @@ code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; 
 body[data-dock="left"] #workspace { flex-direction: row-reverse; }
 body[data-dock="bottom"] #workspace { flex-direction: column; }
 
-/* The sections are tabs, beside the orientation viewer in its corner. */
+/* The sections are tabs. */
 #controls {
 	display: flex;
 	flex-wrap: wrap;
@@ -182,7 +184,6 @@ body[data-dock="bottom"] #workspace { flex-direction: column; }
 	padding: 16px;
 	overflow-y: auto;
 }
-#controls > .card[data-locked] { flex: 0 1 360px; min-width: min(300px, 100%); }
 #tabbed { flex: 1 1 380px; min-width: 0; }
 #tabs {
 	display: flex;
@@ -269,7 +270,7 @@ body:not([data-console="open"]) #console-resizer { display: none; }
 .dock-buttons button:hover, #console-close:hover { color: var(--text); }
 .dock-buttons button[aria-pressed="true"] { color: var(--accent); }
 .dock-buttons svg, #console-close svg { width: 16px; height: 16px; }
-#console-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#console-toggle[aria-pressed="true"], #orientation-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 
 .card-head {
 	display: flex;
@@ -294,10 +295,8 @@ body:not([data-console="open"]) #console-resizer { display: none; }
 	background: var(--terminal);
 }
 
-/* A section's heading. The one outside the tabs folds its section away. */
+/* A section's heading. */
 #controls .card-head h2 { display: flex; align-items: center; gap: 8px; margin-right: auto; }
-#controls > .card .card-head { cursor: pointer; user-select: none; }
-#controls > .card .card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #controls > .card .card-head h2::before {
 	content: "";
 	width: 6px;
@@ -384,111 +383,6 @@ td:last-child, th:last-child { padding-right: 0; }
 #bonds-list td { vertical-align: top; padding: 3px 4px; }
 
 input[type="file"] { width: 100%; }
-/* Orientation viewer: a slab of six faces, turned as a whole by orientation.js. */
-#orientation-scene {
-	height: 230px;
-	perspective: 700px;
-	background: var(--inset);
-	border: 1px solid var(--border);
-	border-radius: 6px;
-	overflow: hidden;
-	--w: 150px; /* board X */
-	--d: 110px; /* board Y */
-	--h: 22px;  /* board Z */
-}
-#orientation-camera, #orientation-model, #orientation-floor, #orientation-model .face {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	transform-style: preserve-3d;
-}
-#orientation-camera { transform: rotateX(-24deg); }
-#orientation-scene { position: relative; }
-#orientation-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-/* With the case drawn on the canvas, the stand-in slab is not. */
-#orientation-scene.has-model .face { display: none; }
-#orientation-floor {
-	width: 260px;
-	height: 260px;
-	margin: -130px 0 0 -130px;
-	transform: translateY(95px) rotateX(90deg);
-	border-radius: 50%;
-	background: radial-gradient(closest-side, color-mix(in srgb, var(--muted) 30%, transparent), transparent);
-}
-#orientation-model .face {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	box-sizing: border-box;
-	border: 1px solid rgba(0, 0, 0, 0.45);
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	color: #ffffff;
-	backface-visibility: hidden;
-}
-#orientation-model .top, #orientation-model .bottom {
-	width: var(--w);
-	height: var(--d);
-	margin: calc(var(--d) / -2) 0 0 calc(var(--w) / -2);
-}
-#orientation-model .front, #orientation-model .back {
-	width: var(--w);
-	height: var(--h);
-	margin: calc(var(--h) / -2) 0 0 calc(var(--w) / -2);
-}
-#orientation-model .left, #orientation-model .right {
-	width: var(--d);
-	height: var(--h);
-	margin: calc(var(--h) / -2) 0 0 calc(var(--d) / -2);
-}
-#orientation-model .top    { transform: rotateX(90deg) translateZ(calc(var(--h) / 2)); background: #1f7a4d; font-size: 14px; }
-#orientation-model .bottom { transform: rotateX(-90deg) translateZ(calc(var(--h) / 2)); background: #4a5560; }
-#orientation-model .front  { transform: translateZ(calc(var(--d) / 2)); background: #2f8f5d; }
-#orientation-model .back   { transform: rotateY(180deg) translateZ(calc(var(--d) / 2)); background: #17603c; }
-#orientation-model .right  { transform: rotateY(90deg) translateZ(calc(var(--w) / 2)); background: #c2410c; }
-#orientation-model .left   { transform: rotateY(-90deg) translateZ(calc(var(--w) / 2)); background: #17603c; }
-#orientation-model .axis { position: absolute; font-size: 11px; font-weight: 600; opacity: 0.85; }
-#orientation-model .axis.x { right: 6px; top: 50%; transform: translateY(-50%); }
-#orientation-model .axis.y { top: 4px; left: 50%; transform: translateX(-50%); }
-/* Where the screen is, as the board sees it: one spot on each side of the
-   board, and the chosen one drawn as a screen. They always face the viewer. */
-#orientation-model .screen-spot {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	width: 14px;
-	height: 14px;
-	margin: -7px 0 0 -7px;
-	padding: 0;
-	border: 1px solid var(--muted);
-	border-radius: 50%;
-	background: var(--panel);
-	opacity: 0.75;
-	font-size: 0;
-}
-#orientation-model .screen-spot:hover { border-color: var(--accent); opacity: 1; }
-#orientation-model .screen-spot[aria-pressed="true"] {
-	width: 46px;
-	height: 30px;
-	margin: -15px 0 0 -23px;
-	border: 2px solid var(--accent);
-	border-bottom-width: 5px;
-	border-radius: 4px;
-	background: color-mix(in srgb, var(--accent) 25%, var(--panel));
-	color: var(--text);
-	opacity: 1;
-	font-size: 9px;
-	font-weight: 600;
-	cursor: default;
-}
-#orientation-model .screen-spot[hidden] { display: none; }
-#orientation-roll, #orientation-pitch, #orientation-yaw {
-	display: inline-block;
-	min-width: 3.2em;
-	font-variant-numeric: tabular-nums;
-}
-
 /* Set on the page when the browser has no Web Bluetooth: only USB is offered. */
 .no-bluetooth .ble-only { display: none; }
 #firmware-status { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
@@ -606,6 +500,7 @@ dialog.ask button.danger { border-color: var(--error); background: var(--error);
 	<h1>MyCato</h1>
 	<span id="device-name"></span>
 	<span id="status" data-state="disconnected">Disconnected</span>
+	<button id="orientation-toggle" aria-pressed="false" title="Show the board's orientation in its own window">Orientation</button>
 	<button id="console-toggle" aria-pressed="true">Console</button>
 	<button id="connect" class="primary">Connect</button>
 	<button id="menu-button" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">
@@ -799,6 +694,10 @@ dialog.ask button.danger { border-color: var(--error); background: var(--error);
 				<span id="hid-hosts" class="note"></span>
 			</div>
 			<div class="card-body">
+				<div class="row" id="hid-peer-row" hidden>
+					<label for="hid-peer">Settings for</label>
+					<select id="hid-peer" class="grow" disabled></select>
+				</div>
 				<div>
 					<div class="row" id="hid-reports"></div>
 					<p class="note">Reports the board sends. All are off until switched on.</p>
@@ -856,7 +755,7 @@ dialog.ask button.danger { border-color: var(--error); background: var(--error);
 						up-down (Y). With acceleration, slower turns than the rate given move
 						the pointer less than that and faster turns more. Automatic directions work however
 						the board is held, as long as it knows where the screen is: show it
-						on the Orientation card.
+						in the Orientation window.
 					</p>
 				</div>
 				</details>
@@ -877,45 +776,10 @@ dialog.ask button.danger { border-color: var(--error); background: var(--error);
 					<select id="hid-rate" disabled></select>
 				</div>
 				<p class="note">
-					These act on whichever computer or phone is using the board as a
-					mouse and keyboard, which may be this one.
+					Each paired device has its own settings, and the buttons here act
+					on the device chosen above, which may be this one.
 				</p>
 				<p class="message"></p>
-			</div>
-		</section>
-
-		<section class="card" data-card="orientation" data-independent data-locked>
-			<div class="card-head">
-				<h2>Orientation</h2>
-				<span id="orientation-rate" class="note"></span>
-			</div>
-			<div class="card-body">
-				<div id="orientation-scene">
-					<canvas id="orientation-canvas"></canvas>
-					<div id="orientation-camera">
-						<div id="orientation-floor"></div>
-						<div id="orientation-model">
-							<div class="face top">TOP<span class="axis x">X →</span><span class="axis y">Y ↑</span></div>
-							<div class="face bottom">BOTTOM</div>
-							<div class="face front">−Y</div>
-							<div class="face back">+Y</div>
-							<div class="face right">+X</div>
-							<div class="face left">−X</div>
-						</div>
-					</div>
-				</div>
-				<div class="row">
-					<span>Roll <strong id="orientation-roll">–</strong></span>
-					<span>Pitch <strong id="orientation-pitch">–</strong></span>
-					<span>Heading <strong id="orientation-yaw">–</strong></span>
-					<button id="orientation-zero" class="small" disabled>Face forward</button>
-				</div>
-				<p id="orientation-screen-note" class="note" hidden>
-					Point the board at the screen as you will use it. If the screen drawn
-					here is not where the real one is, click the dot that is: the pointer
-					then moves the right way however the board is held.
-				</p>
-				<p id="orientation-note" class="note"></p>
 			</div>
 		</section>
 
@@ -1111,7 +975,7 @@ dialog.ask button.danger { border-color: var(--error); background: var(--error);
 		</div>
 		<div>
 			<h3>Tabs</h3>
-			<p>Each tab controls one part of the board. Drag a tab sideways to change the order. The Orientation view stays in the top left corner and opens and closes by its heading. Changes made on a tab are sent to the board as the same commands you could type in the console.</p>
+			<p>Each tab controls one part of the board. Drag a tab sideways to change the order. <strong>Orientation</strong> in the top row opens a live 3D view of the board in its own window. Changes made on a tab are sent to the board as the same commands you could type in the console.</p>
 			<p>The IMU tab shows the sensor's configuration and live readings while it is showing. The readings use the console's line to the board, so typing in the console is off meanwhile: <strong>Pause</strong> on the tab gives it back. Changing the configuration needs <strong>Developer mode</strong>, under Settings.</p>
 		</div>
 		<div>

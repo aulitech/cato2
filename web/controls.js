@@ -5,7 +5,7 @@
 // type in the console and shows the board's own reply or error.
 
 import { ask } from "./dialog.js";
-import { parseBlink, parseBonds, parseHid, parseImu, parseImuRead } from "./shell.js";
+import { parseBlink, parseBonds, parseHid, parseImu, parseImuRead, ShellError } from "./shell.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -363,6 +363,13 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 
 	async function loadBonds() {
 		const state = parseBonds(await shell.run("bonds"));
+
+		// Bonds are numbered as listed: a changed list means changed numbers.
+		if (state.bonds.map((bond) => bond.address).join() !==
+		    knownBonds.map((bond) => bond.address).join()) {
+			hidPeer = null;
+		}
+		knownBonds = state.bonds;
 		const list = $("bonds-list");
 
 		list.replaceChildren();
@@ -443,7 +450,18 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 
 	fill($("hid-rate"), HID_RATE_OPTIONS);
 
+	$("hid-peer").addEventListener("change", () => act("hid", async () => {
+		hidPeer = Number($("hid-peer").value);
+		try {
+			await shell.run(`hid peer ${hidPeer}`);
+		} finally {
+			await loadHid().catch(() => {});
+		}
+	}));
+
 	const hidSwitches = {};
+	let knownBonds = []; // as last listed, for the choice of device
+	let hidPeer = null; // the number of the device the settings shown are for
 	let airSupported = false; // firmware from before the air mouse has no such command
 
 	for (const [report, label] of HID_REPORTS) {
@@ -495,8 +513,49 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 	airSetting("air-axis-x", manualAxes);
 	airSetting("air-axis-y", manualAxes);
 
+	// Mouse, keyboard and sensor settings are kept for each paired device. The
+	// board is told which one the commands are about ("hid peer"); to begin
+	// with that is this device, the one the app is connected from.
+	async function readHid() {
+		try {
+			return parseHid(await shell.run("hid"));
+		} catch (err) {
+			// With several devices paired the board wants one chosen first.
+			if (!(err instanceof ShellError) || !/hid peer/.test(err.message)) {
+				throw err;
+			}
+			await shell.run(`hid peer ${(knownBonds.find((bond) => bond.connected) ||
+						     knownBonds[0] || { index: 1 }).index}`);
+			return parseHid(await shell.run("hid"));
+		}
+	}
+
 	async function loadHid() {
-		const hid = parseHid(await shell.run("hid"));
+		let hid = await readHid();
+
+		if (hid.peer) {
+			const mine = knownBonds.find((bond) => bond.connected);
+			const wanted = hidPeer || (mine && mine.index);
+
+			// Someone else may have chosen another device since.
+			if (wanted && wanted !== hid.peer.index &&
+			    knownBonds.some((bond) => bond.index === wanted)) {
+				await shell.run(`hid peer ${wanted}`);
+				hid = parseHid(await shell.run("hid"));
+			}
+			hidPeer = hid.peer.index;
+		}
+
+		const select = $("hid-peer");
+
+		$("hid-peer-row").hidden = !hid.peer;
+		select.replaceChildren(...(hid.peer ? knownBonds : []).map((bond) => new Option(
+			`${bond.name || bond.address}${bond.connected ? " (this device)" : ""}`,
+			bond.index)));
+		if (hid.peer) {
+			select.value = String(hid.peer.index);
+		}
+
 		const rate = String(hid.rate);
 
 		airSupported = Boolean(hid.air);

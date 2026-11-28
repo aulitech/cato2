@@ -35,9 +35,7 @@ const DRAG_START = 6; // pixels a tab moves before it is being dragged, not clic
 /**
  * The page's sections ("cards" in the markup and the other modules) are laid
  * out as tabs: one shows at a time, chosen from a row of tabs that the user
- * can put in order by dragging. A section marked data-locked (the orientation
- * viewer) is not a tab: it stays in the top left corner, beside the tabs, and
- * folds away by its heading.
+ * can put in order by dragging.
  *
  * The section showing has the class "open", which is what the other modules
  * look at to know whether theirs is in view.
@@ -49,11 +47,6 @@ function initTabs(layout, persist) {
 	const tablist = document.createElement("div");
 	const panels = document.createElement("div");
 	const tabs = new Map(); // section name -> its tab
-
-	const setOpen = (card, open) => {
-		card.classList.toggle("open", open);
-		card.querySelector(".card-head").setAttribute("aria-expanded", String(open));
-	};
 
 	tabbed.id = "tabbed";
 	tablist.id = "tabs";
@@ -85,29 +78,6 @@ function initTabs(layout, persist) {
 
 	for (const card of sections) {
 		const name = card.dataset.card;
-		const head = card.querySelector(".card-head");
-
-		if ("locked" in card.dataset) {
-			// Not a tab: folds by its heading, closed to begin with.
-			const toggle = () => setOpen(card, !card.classList.contains("open"));
-
-			setOpen(card, false);
-			head.setAttribute("role", "button");
-			head.setAttribute("tabindex", "0");
-			head.addEventListener("click", (event) => {
-				if (!event.target.closest("button")) {
-					toggle();
-				}
-			});
-			head.addEventListener("keydown", (event) => {
-				if (event.target === head && (event.key === "Enter" || event.key === " ")) {
-					event.preventDefault();
-					toggle();
-				}
-			});
-			continue;
-		}
-
 		const tab = document.createElement("button");
 
 		tab.type = "button";

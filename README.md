@@ -296,7 +296,7 @@ tipping the board's forward axis up or down moves it up or down.
   `+x -x +y -y +z -z` (default `+y`). This is the one thing gravity cannot
   tell. While that axis points within about 17 degrees of straight up or
   down, sideways has no meaning and the pointer holds still.
-  In MyCato this is set on the **Orientation** card: a screen is drawn on the
+  In MyCato this is set in the **Orientation** window: a screen is drawn on the
   side of the board it is taken to be on, and clicking the dot on another
   side moves it there.
 - `hid air axes <x> <y>` – fixed axes instead: the gyroscope axis that drives
@@ -313,7 +313,7 @@ for applications that are not HID hosts: service
 bytes holding the quaternion x, y, z, w (board to room, Z up) as little-endian
 16-bit integers scaled by 10000, 50 times a second while anything is
 subscribed. It needs a paired link like everything else, and does not depend
-on which HID reports are enabled. The web app's **Orientation** card uses it
+on which HID reports are enabled. The web app's **Orientation** window uses it
 to draw the board turning in 3D.
 
 **Two HID services.** A HID over GATT report map is limited to 512 bytes, so
@@ -395,8 +395,8 @@ given before (`navigator.bluetooth.getDevices`); elsewhere, press **Connect**.
 The page is laid out as tabs, one for each part of the board (General, Blink,
 IMU, Paired devices, Sleep, Mouse and keyboard, Firmware upgrade). One shows
 at a time, and dragging a tab sideways changes the order. The Orientation
-view is not a tab: it stays in the top left corner, beside the tabs, and
-opens and closes by its heading.
+view is not a tab: **Orientation** in the top row opens it in a window of its
+own, and the board streams its orientation only while that window is open.
 
 The console is a drawer: the buttons in its heading dock it left, at the
 bottom or right, open it in a window of its own, or hide it. **Console** at

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
 // Orientation viewer: draws the Cato in 3D, turning with the real one (its
-// case from an STL model, see model.js; a plain slab if that cannot be drawn). The board notifies its fused orientation as a quaternion 50 times a
+// case from an STL model, see model.js; a plain slab if that cannot be drawn).
+// The viewer is a window of its own (orientation.html), opened from the app's
+// top row. The board notifies its fused orientation as a quaternion 50 times a
 // second (see "orientation stream" in src/hid.c); it is only asked to while
-// the viewer's card is open.
+// that window is open, and the app's page passes each one on to it.
 //
 // Around the board is a screen: where the board believes the screen it points
 // at to be, which the pointer (air mouse) needs to know. The user moves it to
@@ -133,17 +135,18 @@ const SCREEN_SPOTS = {
 };
 
 /**
- * @param setForward  async (axis) => void, tells the board which of its axes
- *                    points at the screen
+ * The viewer itself, for the page that shows it (orientation.html). It is
+ * told what to draw: it has no link to the board.
+ *
+ * @param setForward  (axis) => void, asks for the screen to be moved to the
+ *                    side of the board that axis points out of
+ * @returns { sample(q), setState({ live, supported, forward }), setNote(text) }
  */
-export function initOrientation({ setForward }) {
-	const card = document.querySelector('[data-card="orientation"]');
+export function initOrientationView({ setForward }) {
 	const model = $("orientation-model");
 	const note = $("orientation-note");
-	let source = null; // the characteristic, while connected to firmware that has it
+	let live = false; // connected to a board whose firmware has the stream
 	let supported = true;
-	let streaming = false;
-	let wanted = card.classList.contains("open");
 	let latest = null;
 	let zeroYaw = null;
 	let frame = 0;
@@ -197,22 +200,14 @@ export function initOrientation({ setForward }) {
 		spot.type = "button";
 		spot.title = `The screen is on the board's ${side} side`;
 		spot.setAttribute("aria-label", spot.title);
-		spot.addEventListener("click", async () => {
-			const before = forward;
-
+		spot.addEventListener("click", () => {
 			if (axis === forward) {
 				return;
 			}
-			// Moved at once; put back if the board does not take it.
+			// Moved at once; the app puts it back if the board does not take it.
 			forward = axis;
 			showSpots();
-			try {
-				await setForward(axis);
-			} catch (err) {
-				forward = before;
-				showSpots();
-				note.textContent = `Could not move the screen: ${err.message}`;
-			}
+			setForward(axis);
 		});
 		model.append(spot);
 		spots[axis] = spot;
@@ -245,33 +240,105 @@ export function initOrientation({ setForward }) {
 		$("orientation-yaw").textContent = `${yaw.toFixed(0)}°`;
 	}
 
-	function onValue(event) {
-		const q = decodeQuaternion(event.target.value);
-		const now = performance.now();
-
-		if (!q) {
-			return;
-		}
-		latest = q;
-		count++;
-		if (now - countSince >= 1000) {
-			$("orientation-rate").textContent = `${Math.round(count * 1000 / (now - countSince))} Hz`;
-			count = 0;
-			countSince = now;
-		}
-		// At most one redraw per screen frame, however fast the samples arrive.
-		if (!frame) {
-			frame = requestAnimationFrame(draw);
-		}
-	}
-
 	function showNote() {
 		note.textContent = !supported
 			? "This board's firmware has no orientation stream. Upgrade it to use the viewer."
-			: !source
+			: !live
 				? "Connect to see the board's orientation."
 				: "Heading has no fixed reference: it starts from where the board was " +
 				  "and drifts slowly. Face forward sets it back to straight ahead.";
+	}
+
+	$("orientation-zero").addEventListener("click", () => {
+		zeroYaw = null;
+		if (latest && !frame) {
+			frame = requestAnimationFrame(draw);
+		}
+	});
+
+	showNote();
+
+	return {
+		/** Call with each orientation the board sends: a quaternion x, y, z, w. */
+		sample(q) {
+			const now = performance.now();
+
+			latest = q;
+			count++;
+			if (now - countSince >= 1000) {
+				$("orientation-rate").textContent = `${Math.round(count * 1000 / (now - countSince))} Hz`;
+				count = 0;
+				countSince = now;
+			}
+			// At most one redraw per screen frame, however fast the samples arrive.
+			if (!frame) {
+				frame = requestAnimationFrame(draw);
+			}
+		},
+		/**
+		 * Call when any of these changes: whether a board with the stream is
+		 * connected, whether the connected board's firmware has it, and the
+		 * board axis that points at the screen (null when not known).
+		 */
+		setState(state) {
+			if (Boolean(state.live) !== live) {
+				latest = null;
+				zeroYaw = null;
+				count = 0;
+				countSince = performance.now();
+				$("orientation-rate").textContent = "";
+			}
+			live = Boolean(state.live);
+			supported = state.supported !== false;
+			forward = state.forward in SCREEN_SPOTS ? state.forward : null;
+			$("orientation-zero").disabled = !live;
+			showSpots();
+			showNote();
+		},
+		/** Shows a message in place of the usual note, until the state changes. */
+		setNote(text) {
+			note.textContent = text;
+		},
+	};
+}
+
+/**
+ * The app's side of the viewer: opens its window from the Orientation button
+ * in the top row, and has the board stream its orientation while that window
+ * is open.
+ *
+ * @param setForward  async (axis) => void, tells the board which of its axes
+ *                    points at the screen
+ */
+export function initOrientation({ setForward }) {
+	const toggle = $("orientation-toggle");
+	let popup = null;
+	let ready = false; // the window's page has loaded and is listening
+	let source = null; // the characteristic, while connected to firmware that has it
+	let supported = true;
+	let streaming = false;
+	let forward = null; // the axis pointing at the screen, once the board has said
+
+	const isOpen = () => Boolean(popup && !popup.closed);
+	const tell = (message) => {
+		if (isOpen() && ready) {
+			popup.postMessage(message, location.origin);
+		}
+	};
+	const tellState = () => tell({
+		type: "orientation-state",
+		live: Boolean(source),
+		supported,
+		forward,
+	});
+	const show = () => toggle.setAttribute("aria-pressed", String(isOpen()));
+
+	function onValue(event) {
+		const q = decodeQuaternion(event.target.value);
+
+		if (q) {
+			tell({ type: "orientation-sample", q });
+		}
 	}
 
 	// Another Bluetooth operation, such as a console command, may be under way:
@@ -291,10 +358,11 @@ export function initOrientation({ setForward }) {
 
 	let syncing = Promise.resolve();
 
-	// Starts or stops the stream to match: wanted while the card is open.
+	// Starts or stops the stream to match: wanted while the window is open.
 	function sync() {
 		syncing = syncing.then(async () => {
 			const target = source;
+			const wanted = isOpen() && ready;
 
 			if (!target || streaming === wanted) {
 				return;
@@ -302,41 +370,89 @@ export function initOrientation({ setForward }) {
 			try {
 				if (wanted) {
 					await attempt(() => target.startNotifications());
-					count = 0;
-					countSince = performance.now();
 				} else {
 					await attempt(() => target.stopNotifications());
-					$("orientation-rate").textContent = "";
 				}
 				if (source === target) {
 					streaming = wanted;
 				}
 			} catch (err) {
 				if (source === target) {
-					note.textContent = `Could not ${wanted ? "start" : "stop"} the stream: ${err.message}`;
+					tell({
+						type: "orientation-note",
+						text: `Could not ${wanted ? "start" : "stop"} the stream: ${err.message}`,
+					});
 				}
 			}
 		});
 		return syncing;
 	}
 
-	new MutationObserver(() => {
-		const open = card.classList.contains("open");
+	async function moveScreen(axis) {
+		const before = forward;
 
-		if (open !== wanted) {
-			wanted = open;
+		if (!(axis in SCREEN_SPOTS) || axis === forward) {
+			return;
+		}
+		forward = axis;
+		try {
+			await setForward(axis);
+		} catch (err) {
+			// The window has drawn it moved already: put it back.
+			forward = before;
+			tellState();
+			tell({ type: "orientation-note", text: `Could not move the screen: ${err.message}` });
+		}
+	}
+
+	// A window closed without saying so (a crash, a kill) is noticed too.
+	function checkClosed() {
+		if (popup && popup.closed) {
+			popup = null;
+			ready = false;
+			show();
 			sync();
 		}
-	}).observe(card, { attributes: true, attributeFilter: ["class"] });
+	}
 
-	$("orientation-zero").addEventListener("click", () => {
-		zeroYaw = null;
-		if (latest && !frame) {
-			frame = requestAnimationFrame(draw);
+	toggle.addEventListener("click", () => {
+		if (isOpen()) {
+			popup.focus();
+			return;
 		}
+		ready = false;
+		// Null if the browser blocks it.
+		popup = window.open("orientation.html", "cato-orientation", "popup,width=460,height=600");
+		show();
 	});
 
-	showNote();
+	window.addEventListener("message", (event) => {
+		if (event.origin !== location.origin || !popup || event.source !== popup) {
+			return;
+		}
+
+		const message = event.data || {};
+
+		if (message.type === "orientation-ready") {
+			ready = true;
+			tellState();
+			sync();
+		} else if (message.type === "orientation-forward") {
+			moveScreen(String(message.axis));
+		} else if (message.type === "orientation-closed") {
+			// Closed, or reloaded: a reloaded page says it is ready again.
+			ready = false;
+			sync();
+			setTimeout(checkClosed, 200);
+		}
+	});
+	setInterval(checkClosed, 1000);
+	window.addEventListener("pagehide", () => {
+		if (popup) {
+			popup.close();
+		}
+	});
+	show();
 
 	return {
 		/**
@@ -345,7 +461,7 @@ export function initOrientation({ setForward }) {
 		 */
 		showForward(axis) {
 			forward = axis in SCREEN_SPOTS ? axis : null;
-			showSpots();
+			tellState();
 		},
 		/**
 		 * Call with the orientation characteristic after connecting (null if
@@ -358,19 +474,14 @@ export function initOrientation({ setForward }) {
 			source = characteristic || null;
 			supported = !connected || Boolean(characteristic);
 			streaming = false;
-			latest = null;
-			zeroYaw = null;
 			if (!connected) {
 				forward = null;
-				showSpots();
 			}
-			$("orientation-zero").disabled = !source;
-			$("orientation-rate").textContent = "";
+			tellState();
 			if (source) {
 				source.addEventListener("characteristicvaluechanged", onValue);
 				sync();
 			}
-			showNote();
 		},
 	};
 }

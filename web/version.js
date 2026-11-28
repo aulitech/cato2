@@ -5,4 +5,4 @@
 // repository). A plain script, so that the page and the service worker can
 // both load it.
 
-self.MYCATO_VERSION = "0.3.1";
+self.MYCATO_VERSION = "0.3.2";

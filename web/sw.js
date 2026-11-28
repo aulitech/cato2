@@ -20,6 +20,7 @@ const FILES = [
 	"menu.js",
 	"model.js",
 	"cato.stl",
+	"orientation.html",
 	"orientation.js",
 	"shell.js",
 	"smp.js",
