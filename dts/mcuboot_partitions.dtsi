@@ -3,15 +3,27 @@
  *
  * Flash layout: MCUboot chain-loaded by the stock Adafruit UF2 bootloader.
  *
- *   0x00000  MBR + SoftDevice S140 v7 (left in place, unused by Zephyr)
- *   0x27000  MCUboot (where the UF2 bootloader expects the application)
- *   0x33000  slot 0: running image
- *   0x8f000  slot 1: OTA download
- *   0xeb000  settings storage
+ *   0x00000  MBR (the UF2 bootloader's, left in place)
+ *   0x01000  MCUboot
+ *   0x06000  slot 0: running image
+ *   0x79000  slot 1: OTA download
+ *   0xec000  settings storage
  *   0xf4000  Adafruit UF2 bootloader
  *
+ * There is no SoftDevice: Zephyr has its own Bluetooth stack. The UF2
+ * bootloader starts whatever follows the MBR when it finds none, so MCUboot
+ * takes the SoftDevice's place, and writing usb-upgrade.uf2 to a board that
+ * still has one overwrites it.
+ *
+ * MCUboot is built to be small (sysbuild/mcuboot.conf) and has the least
+ * whole number of pages it fits in, with some to spare. The settings have the
+ * eight pages their store uses and no more. They used to start a page lower,
+ * at 0xeb000, with a ninth page that was never written: the firmware carries
+ * them across the first time it starts (see storage_follow_layout() in
+ * src/main.c), so they survive the move.
+ *
  * Included by both the application and the MCUboot overlay so the two images
- * always agree on the layout.
+ * always agree on the layout. sysbuild.cmake names the ends of the slots too.
  */
 
 /delete-node/ &code_partition;
@@ -19,24 +31,24 @@
 
 &flash0 {
 	partitions {
-		mcuboot_partition: partition@27000 {
+		mcuboot_partition: partition@1000 {
 			label = "mcuboot";
-			reg = <0x00027000 0x0000c000>;
+			reg = <0x00001000 0x00005000>;
 		};
 
-		slot0_partition: partition@33000 {
+		slot0_partition: partition@6000 {
 			label = "image-0";
-			reg = <0x00033000 0x0005c000>;
+			reg = <0x00006000 0x00073000>;
 		};
 
-		slot1_partition: partition@8f000 {
+		slot1_partition: partition@79000 {
 			label = "image-1";
-			reg = <0x0008f000 0x0005c000>;
+			reg = <0x00079000 0x00073000>;
 		};
 
-		storage_partition: partition@eb000 {
+		storage_partition: partition@ec000 {
 			label = "storage";
-			reg = <0x000eb000 0x00009000>;
+			reg = <0x000ec000 0x00008000>;
 		};
 	};
 };

@@ -783,6 +783,34 @@ dialog.ask button.danger { border-color: var(--error); background: var(--error);
 			</div>
 		</section>
 
+		<section class="card" data-card="files">
+			<div class="card-head">
+				<h2>Files</h2>
+				<span id="files-space" class="note"></span>
+				<button id="files-refresh" class="small" disabled>Refresh</button>
+			</div>
+			<div class="card-body">
+				<table>
+					<thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+					<tbody id="files-list"></tbody>
+				</table>
+				<div class="row">
+					<button id="files-upload" disabled>Send a file…</button>
+					<input id="files-pick" type="file" hidden disabled>
+				</div>
+				<div id="files-progress" hidden>
+					<progress id="files-progress-bar" max="1" value="0"></progress>
+					<div id="files-progress-text" class="note"></div>
+				</div>
+				<p class="note">
+					Files kept on the board's own 2 MB of storage, for the firmware
+					and for you. A file is checked when it arrives and only then put
+					in place, so one that is cut short never replaces what was there.
+				</p>
+				<p id="files-message" class="message"></p>
+			</div>
+		</section>
+
 		<section class="card" data-card="firmware">
 			<div class="card-head">
 				<h2>Firmware upgrade</h2>
@@ -977,6 +1005,7 @@ dialog.ask button.danger { border-color: var(--error); background: var(--error);
 			<h3>Tabs</h3>
 			<p>Each tab controls one part of the board. Drag a tab sideways to change the order. <strong>Orientation</strong> in the top row opens a live 3D view of the board in its own window. Changes made on a tab are sent to the board as the same commands you could type in the console.</p>
 			<p>The IMU tab shows the sensor's configuration and live readings while it is showing. The readings use the console's line to the board, so typing in the console is off meanwhile: <strong>Pause</strong> on the tab gives it back. Changing the configuration needs <strong>Developer mode</strong>, under Settings.</p>
+			<p>The Files tab lists what is on the board's storage, and sends, downloads and deletes files. Names on the board are plain: letters, digits, <code>.</code> <code>_</code> and <code>-</code>, up to 40 characters; anything else in a name is turned into <code>_</code>. A file is sent under a temporary name and takes its place only once the board has checked it, so a transfer that is interrupted leaves the earlier file as it was. Only one transfer runs at a time: if another device is in the middle of one, the board says it is busy.</p>
 		</div>
 		<div>
 			<h3>Console</h3>

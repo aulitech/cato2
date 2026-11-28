@@ -17,6 +17,10 @@ it up, controls it and upgrades it (<https://auli-ng.netlify.app>, source in
 - **No debug probe needed** – MCUboot is chain-loaded by the board's stock
   Adafruit UF2 bootloader, so the first flash is drag-and-drop, or one button
   in MyCato
+- **No SoftDevice** – the 152 KB it took goes to the firmware, and MCUboot is
+  cut down to 20 KB
+- **Files** – a file system on the board's 2 MB QSPI flash, shared safely by
+  the firmware, the shell and MyCato over Bluetooth
 
 The app blinks the RGB LED and adds shell commands to set the blink rate and
 pattern (`blink`), rename the board (`name`), manage paired devices (`bonds`),
@@ -28,7 +32,13 @@ or motion (`sleep`), restart (`reboot`), return to factory defaults
 > **Verified on hardware** (XIAO nRF52840 Sense, UF2 bootloader 0.6.1): UF2 first
 > flash, MCUboot chain-load, the shell over BLE and USB, every shell command
 > below, pairing with a Mac, the HID input and property reports as seen by macOS, and OTA
-> upgrades in both directions. Not exercised: MCUboot's automatic revert of a
+> upgrades in both directions; and, with the SoftDevice gone, the move of a
+> board from the earlier flash layout by one USB upgrade (name, settings and
+> bond kept) and a Bluetooth upgrade after it; and the files: the `files`
+> commands, transfers over Bluetooth in both directions from a test client,
+> the refusals (wrong name, wrong checksum, a file in use) and the clean-up
+> after a restart. MyCato's Files tab has sent its own packets to a real board
+> but has not been used against one from the browser. Not exercised: MCUboot's automatic revert of a
 > bad image, refusing a sixth or locked-out device, more than one device
 > connected at once, and any host other than macOS (no phone, Windows or
 > Linux). Also not yet tried on a real board: `factory_reset`, the erasing of a
@@ -39,7 +49,9 @@ or motion (`sleep`), restart (`reboot`), return to factory defaults
 ## Requirements
 
 - nRF Connect SDK v3.4.2 and its toolchain
-- The board's stock Adafruit nRF52 UF2 bootloader (with SoftDevice S140 v7)
+- The board's stock Adafruit nRF52 UF2 bootloader (tested with 0.6.1). The SoftDevice
+  it comes with is not used, and the first flash writes over it (see
+  [Flash layout](#flash-layout))
 
 ## Board target
 
@@ -78,6 +90,12 @@ shell command resets it into the same USB drive mode.
 
 The same procedure recovers a board at any time, since the UF2 bootloader is
 left untouched.
+
+The file starts right after the MBR, so it writes over the SoftDevice a board
+comes with, which this firmware has no use for. The UF2 bootloader then starts
+MCUboot in its place. Firmware that needs the SoftDevice (Arduino,
+CircuitPython, the legacy Cato firmware) will not start on the board
+afterwards unless the SoftDevice is written back first.
 
 MyCato does both steps with the published build: see
 [Upgrading over USB](#upgrading-over-usb).
@@ -124,11 +142,13 @@ names, so a board they have already seen may show its old name for a while.
 `reboot` restarts the board; every setting is kept.
 
 `version` shows the firmware version, from the `VERSION` file the build was
-made with:
+made with, and where in flash the firmware runs from, which tells the
+[flash layout](#flash-layout) the board has:
 
 ```
 Cato_1A2B:~$ version
-firmware 0.3.0
+firmware 0.5.0
+image slot at 0x6000
 ```
 
 `factory_reset confirm` erases everything the board has stored – name, blink,
@@ -347,6 +367,54 @@ The Device Information Service carries the chip's unique ID as the serial
 number, and the pid.codes test IDs (`1209:0001`) as vendor and product:
 replace those in `prj.conf` with your own.
 
+### Files
+
+The board's 2 MB QSPI flash holds a LittleFS file system, mounted at `/lfs`.
+The firmware reads and writes it (`files_read()` and `files_write()` in
+`src/files.c`), the shell lists and removes files, and MyCato's **Files** tab
+sends, downloads and deletes them over Bluetooth. The flash chip sleeps
+whenever it is idle.
+
+```
+Cato_1A2B:~$ files
+1482  config.json
+60000  recording.bin
+2 files, 2019328 of 2097152 bytes free
+Cato_1A2B:~$ files crc config.json
+1482 bytes, crc32 5d0c9a41
+Cato_1A2B:~$ files rm recording.bin
+```
+
+A file's name is 1 to 40 letters, digits, `.`, `_` and `-`, starting with a
+letter or digit. There are no directories.
+
+Several things can be at the files at once: two shell sessions, up to three
+Bluetooth connections, and the firmware. They are kept apart like this:
+
+- **One lock** in the firmware is held through every operation of more than
+  one step: listing, checksumming, storing, removing, and the firmware's own
+  reads and writes.
+- **One transfer at a time.** A transfer over Bluetooth that would collide
+  with one under way is refused as busy. One that goes quiet (its link
+  dropped) stops counting after six seconds.
+- **Nothing is written in place.** An upload goes to `<name>.part`. `files
+  commit <name> <bytes> <crc32>` makes it the file, by an atomic rename, only
+  if its size and CRC-32 are what the sender gives; otherwise it is discarded
+  and the file is as it was. A power cut at any moment leaves either the whole
+  old file or the whole new one. The firmware's own writes go the same way.
+- **A file in use stays put.** It cannot be replaced or removed while it is
+  being downloaded, nor an upload stored or discarded while it is arriving.
+- **Downloads are checked.** MyCato takes the file's CRC-32 first (`files
+  crc`) and saves what arrives only if it matches, trying once more if not.
+- **Only plain names** are reachable over Bluetooth and from the shell: nothing
+  outside `/lfs`, and the `.part` and `.tmp` files only as described.
+- **Leftovers go.** `files discard <name>` drops an upload that was not
+  stored, and the board removes any it finds when it starts.
+
+The transfers use MCUmgr's file commands (SMP group 8) on the same paired,
+encrypted link as the firmware upgrade. Another client can use them too, by
+the same steps: upload to `/lfs/<name>.part`, then `files commit` in the shell.
+
 ### Sleep
 
 `sleep` powers the board down to its lowest-power state. Bluetooth and USB
@@ -393,7 +461,7 @@ connected to, in browsers that let a page see the Bluetooth devices it was
 given before (`navigator.bluetooth.getDevices`); elsewhere, press **Connect**.
 
 The page is laid out as tabs, one for each part of the board (General, Blink,
-IMU, Paired devices, Sleep, Mouse and keyboard, Firmware upgrade). One shows
+IMU, Paired devices, Sleep, Mouse and keyboard, Files, Firmware upgrade). One shows
 at a time, and dragging a tab sideways changes the order. The Orientation
 view is not a tab: **Orientation** in the top row opens it in a window of its
 own, and the board streams its orientation only while that window is open.
@@ -436,7 +504,9 @@ the VS Code serial terminal or `screen`.
 MyCato's **Firmware upgrade** card says whether the board already has the most
 recent build of `main` (see [Published builds](#published-builds)) and
 installs it with one button: **Upgrade over Bluetooth**, or **Upgrade over
-USB** for a new board or one that does not accept the Bluetooth upgrade.
+USB** for a new board or one that does not accept the Bluetooth upgrade. A
+board with the [earlier flash layout](#boards-with-the-earlier-layout) is
+offered the upgrade over USB only, which it needs once.
 Settings and paired devices are kept either way, except on a legacy Cato (below).
 
 ### Upgrading over Bluetooth
@@ -568,14 +638,56 @@ to that file's path.
 
 | Address | Size | Contents |
 | --- | --- | --- |
-| `0x00000` | 156 KB | MBR + SoftDevice (left in place, unused by Zephyr) |
-| `0x27000` | 48 KB | MCUboot |
-| `0x33000` | 368 KB | Slot 0 – running image |
-| `0x8F000` | 368 KB | Slot 1 – OTA download |
-| `0xEB000` | 36 KB | Settings storage |
+| `0x00000` | 4 KB | MBR (the UF2 bootloader's) |
+| `0x01000` | 20 KB | MCUboot |
+| `0x06000` | 460 KB | Slot 0 – running image |
+| `0x79000` | 460 KB | Slot 1 – OTA download |
+| `0xEC000` | 32 KB | Settings storage |
 | `0xF4000` | 48 KB | Adafruit UF2 bootloader |
 
 Defined in `dts/mcuboot_partitions.dtsi`, shared by the app and MCUboot.
+
+The separate 2 MB QSPI flash chip is all one partition, for the
+[files](#files) (`app.overlay`).
+
+There is no SoftDevice: Zephyr has its own Bluetooth stack, and the UF2
+bootloader starts whatever follows the MBR when it finds none. MCUboot is
+built with nothing it does not need (`sysbuild/mcuboot.conf`), which makes it
+about 16.5 KB, and has 20 KB. The build fails if it outgrows that.
+
+### Boards with the earlier layout
+
+Firmware up to 0.4.0 kept the SoftDevice: MCUboot was at `0x27000` (48 KB) and
+the slots at `0x33000` and `0x8F000` (368 KB each). The settings had 36 KB
+from `0xEB000`, one page lower than now, of which their store used the first
+32 KB.
+
+The settings follow the layout by themselves. Seven of the store's eight pages
+are where they were; the firmware copies the eighth, the old first page, to
+the new last one the first time it starts, checks the copy, and only then
+erases the original, which is now the end of slot 1. A power cut part way
+through is picked up on the next start. A word in the UICR (`CUSTOMER[0]`)
+records that it is done.
+
+A board moves to the present layout by one upgrade over USB, which keeps its
+settings and paired devices. It cannot be done over Bluetooth, which replaces
+the firmware and leaves MCUboot and the slots where they are. `version` says
+where a board's firmware runs from (`image slot at 0x6000`; firmware that does
+not say is at `0x33000`), and MyCato reads it: for a board on the earlier
+layout it offers the upgrade over USB only. Other tools do not check. A build
+for one layout sent over Bluetooth to a board with the other does not start,
+and MCUboot puts the previous firmware back on the next reset.
+
+Do not write a `usb-upgrade.uf2` from 0.4.0 or earlier onto a board with the
+present layout. MCUboot stays at `0x01000` and finds half of its slot
+overwritten, so the board does not start until a current `usb-upgrade.uf2` is
+written the same way.
+
+The UF2 bootloader keeps flash from `0xEA000` up for the application's data
+and refuses a file that writes there, so `usb-upgrade.uf2` must not. After
+refusing a file it takes no other until it is reset: press the reset button
+once (the firmware already on the board starts), or send the firmware by the
+bootloader's serial protocol with `adafruit-nrfutil dfu serial`.
 
 ## Before shipping a product
 

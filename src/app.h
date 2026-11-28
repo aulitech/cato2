@@ -63,6 +63,24 @@ int bonds_init(void);
 /* bonds.c: the name given to a bonded device, or NULL if it has none. */
 const char *bonds_name(const bt_addr_le_t *addr);
 
+#include <stddef.h>
+
+/*
+ * files.c: mount the file system on the QSPI flash, which MyCato and the
+ * "files" shell command also reach. See there for how they are kept from
+ * getting in each other's way.
+ */
+int files_init(void);
+
+/*
+ * The firmware's own access to a file, by its name alone. files_read() reads
+ * up to size bytes from its start and gives the number read. files_write()
+ * replaces the whole file, or leaves it as it was: never half of each. It
+ * gives -EBUSY while the file is being downloaded over Bluetooth.
+ */
+int files_read(const char *name, void *buf, size_t size, size_t *len);
+int files_write(const char *name, const void *data, size_t len);
+
 /* crash.c: log the crash that caused the previous restart, if any. */
 void crash_report(void);
 

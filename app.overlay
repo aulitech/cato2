@@ -7,3 +7,22 @@
 		zephyr,code-partition = &slot0_partition;
 	};
 };
+
+/*
+ * The board's 2 MB QSPI flash holds a file system (src/files.c), all of it.
+ * The chip is put in deep power-down whenever it is not in use.
+ */
+&p25q16h {
+	zephyr,pm-device-runtime-auto;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		files_partition: partition@0 {
+			label = "files";
+			reg = <0x00000000 0x00200000>;
+		};
+	};
+};
