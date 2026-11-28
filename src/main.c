@@ -17,7 +17,9 @@
 #include <zephyr/shell/shell_uart.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/drivers/flash.h>
 #include <hal/nrf_power.h>
+#include <nrfx_nvmc.h>
 #include <app_version.h>
 
 #include "app.h"
@@ -359,6 +361,98 @@ static int count_setting(const char *key, size_t len, settings_read_cb read_cb, 
 	return 0;
 }
 
+/*
+ * The settings used to start one flash page lower than they do now, in a
+ * partition of nine pages of which their store (NVS, eight sectors of a page
+ * each) only ever used the first eight. The partition is now those eight
+ * pages moved up by one, which gives the page below to the firmware slots.
+ *
+ * Seven of the store's eight pages are therefore already in place. The
+ * eighth, its old first page, is now the last page of slot 1, and is copied
+ * here to the one page the store did not have before: the new last page.
+ * The store is a ring of sectors, so its first sector turning up as its last
+ * is the same ring, and everything in it is found as before.
+ *
+ * This is done once, before the settings are first read. A word in the UICR
+ * (which keeps its value through upgrades and resets, and can be written
+ * only once) records that it has been. Until then every start goes through
+ * it again, and each step leaves things so that the next start can pick up
+ * from wherever a power cut left them: the old page is erased only after its
+ * copy has been read back and compared, and the word is written last.
+ */
+#define FLASH_PAGE 4096
+#define OLD_FIRST_PAGE (PARTITION_OFFSET(storage_partition) - FLASH_PAGE)
+#define NEW_LAST_PAGE \
+	(PARTITION_OFFSET(storage_partition) + PARTITION_SIZE(storage_partition) - FLASH_PAGE)
+#define STORAGE_MOVED (&NRF_UICR->CUSTOMER[0])
+#define STORAGE_MOVED_MARK 0x00000001
+
+BUILD_ASSERT(PARTITION_SIZE(storage_partition) == 8 * FLASH_PAGE);
+BUILD_ASSERT(OLD_FIRST_PAGE == PARTITION_OFFSET(slot1_partition) +
+				PARTITION_SIZE(slot1_partition) - FLASH_PAGE);
+
+/* -1 on a read error, 1 if the page is erased or the same as another, else 0. */
+static int page_is(const struct device *flash, off_t page, const off_t *same_as)
+{
+	uint8_t a[128];
+	uint8_t b[sizeof(a)];
+
+	memset(b, 0xff, sizeof(b));
+	for (off_t at = 0; at < FLASH_PAGE; at += sizeof(a)) {
+		if (flash_read(flash, page + at, a, sizeof(a)) != 0 ||
+		    (same_as != NULL && flash_read(flash, *same_as + at, b, sizeof(b)) != 0)) {
+			return -1;
+		}
+		if (memcmp(a, b, sizeof(a)) != 0) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+static void storage_follow_layout(void)
+{
+	const struct device *flash = DEVICE_DT_GET(DT_CHOSEN(zephyr_flash_controller));
+	const off_t from = OLD_FIRST_PAGE;
+	const off_t to = NEW_LAST_PAGE;
+	uint8_t chunk[128];
+	int blank;
+
+	if (*STORAGE_MOVED != 0xffffffff) {
+		return;
+	}
+	if (!device_is_ready(flash)) {
+		return;
+	}
+
+	blank = page_is(flash, from, NULL);
+	if (blank < 0) {
+		return;
+	}
+	if (!blank) {
+		/* Anything already in the new page is a copy that was cut short. */
+		if (page_is(flash, to, NULL) != 1 && flash_erase(flash, to, FLASH_PAGE) != 0) {
+			return;
+		}
+		for (off_t at = 0; at < FLASH_PAGE; at += sizeof(chunk)) {
+			if (flash_read(flash, from + at, chunk, sizeof(chunk)) != 0 ||
+			    flash_write(flash, to + at, chunk, sizeof(chunk)) != 0) {
+				return;
+			}
+		}
+		if (page_is(flash, to, &from) != 1) {
+			return;
+		}
+		/* The page is slot 1's now, where MCUboot expects to find it blank. */
+		if (flash_erase(flash, from, FLASH_PAGE) != 0) {
+			return;
+		}
+		LOG_INF("Settings moved to their place in the new flash layout");
+	}
+
+	nrfx_nvmc_word_write((uint32_t)STORAGE_MOVED, STORAGE_MOVED_MARK);
+}
+
 /* Erases the whole settings partition. */
 static int erase_storage(void)
 {
@@ -388,6 +482,13 @@ SHELL_CMD_REGISTER(reboot, NULL, "Restart the board", cmd_reboot);
 static int cmd_version(const struct shell *sh, size_t argc, char **argv)
 {
 	shell_print(sh, "firmware %s", APP_VERSION_STRING);
+	/*
+	 * Where in flash the image runs from. An image built for another flash
+	 * layout runs from somewhere else and cannot be installed over
+	 * Bluetooth: MyCato reads this to tell. Firmware that does not print it
+	 * is at 0x33000.
+	 */
+	shell_print(sh, "image slot at 0x%x", (unsigned int)PARTITION_OFFSET(slot0_partition));
 
 	return 0;
 }
@@ -436,6 +537,8 @@ int main(void)
 
 	LOG_INF("XIAO nRF52840 Sense Plus, firmware %s", APP_VERSION_STRING);
 	crash_report();
+
+	storage_follow_layout();
 
 	/*
 	 * Application settings first; the Bluetooth ones (bonds, name) can only
@@ -489,6 +592,8 @@ int main(void)
 	}
 
 	imu_init();
+	/* The board works without its files: the failure is logged there. */
+	(void)files_init();
 
 	k_work_init(&adv_work, adv_work_handler);
 	k_work_init_delayable(&security_timeout_work, security_timeout_handler);
