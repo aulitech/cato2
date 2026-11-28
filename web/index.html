@@ -7,7 +7,7 @@
 <title>MyCato</title>
 <meta name="description" content="MyCato: set up, control and upgrade a Cato over Bluetooth or USB">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#171b21" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -27,53 +27,61 @@ try {
 <style>
 :root {
 	color-scheme: light dark;
-	--bg: #f4f5f7;
+	/* The palette of the Assistive Communication app (its tokens.css), which is
+	   dark only: the dark theme below is that palette as it stands, and this
+	   light one is the same hues taken down far enough to read on white. */
+	--bg: #f2f2f2;
 	--panel: #ffffff;
-	--inset: #f4f5f7;
-	--border: #d9dde3;
-	--text: #1c2128;
-	--muted: #5d6673;
-	--accent: #0b6bcb;
+	--inset: #f2f2f2;
+	--border: #d4d4d4;
+	--text: #0f0f0f;
+	--muted: #525252;
+	--accent: #15803d;
 	--accent-text: #ffffff;
-	--ok: #1a7f37;
-	--warn: #9a6700;
-	--error: #cf222e;
-	--terminal: #11151a;
+	--ok: #15803d;
+	--warn: #b45309;
+	--error: #b91c1c;
+	--info: #1d4ed8;
+	--terminal: #0a0a0a;
 }
 
 /* Dark: when the system is, unless Settings says light; or when Settings says dark. */
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme="light"]) {
-		--bg: #0d1014;
-		--panel: #171b21;
-		--inset: #0d1014;
-		--border: #2c333c;
-		--text: #e3e7ec;
-		--muted: #94a0ae;
-		--accent: #4c9bf0;
-		--accent-text: #0d1014;
-		--ok: #4ac26b;
-		--warn: #d4a72c;
-		--error: #ff7b72;
+		--bg: #0a0a0a;
+		--panel: #1a1a1a;
+		--inset: #222222;
+		--border: #2e2e2e;
+		--text: #f2f2f2;
+		--muted: #b0b0b0;
+		--accent: #22c55e;
+		--accent-text: #0a0a0a;
+		--ok: #22c55e;
+		--warn: #f59e0b;
+		--error: #ef4444;
+		--info: #60a5fa;
 	}
 }
 :root[data-theme="dark"] {
 	color-scheme: dark;
-	--bg: #0d1014;
-	--panel: #171b21;
-	--inset: #0d1014;
-	--border: #2c333c;
-	--text: #e3e7ec;
-	--muted: #94a0ae;
-	--accent: #4c9bf0;
-	--accent-text: #0d1014;
-	--ok: #4ac26b;
-	--warn: #d4a72c;
-	--error: #ff7b72;
+	--bg: #0a0a0a;
+	--panel: #1a1a1a;
+	--inset: #222222;
+	--border: #2e2e2e;
+	--text: #f2f2f2;
+	--muted: #b0b0b0;
+	--accent: #22c55e;
+	--accent-text: #0a0a0a;
+	--ok: #22c55e;
+	--warn: #f59e0b;
+	--error: #ef4444;
+	--info: #60a5fa;
 }
 :root[data-theme="light"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
+/* Hidden means hidden, whatever display a class gives the element. */
+[hidden] { display: none !important; }
 
 body {
 	display: flex;
@@ -163,20 +171,54 @@ code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; 
 body[data-dock="left"] #workspace { flex-direction: row-reverse; }
 body[data-dock="bottom"] #workspace { flex-direction: column; }
 
-/* The cards are the page: a grid the user arranges. */
+/* The sections are tabs. */
 #controls {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
-	grid-auto-rows: max-content;
-	gap: 12px;
-	align-items: start;
-	align-content: start;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	align-content: flex-start;
+	gap: 16px;
 	flex: 1;
 	min-width: 0;
 	min-height: 0;
 	padding: 16px;
 	overflow-y: auto;
 }
+#tabbed { flex: 1 1 380px; min-width: 0; }
+#tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	border-bottom: 1px solid var(--border);
+}
+#tabs [role="tab"] {
+	margin-bottom: -1px;
+	padding: 8px 12px;
+	border: 1px solid transparent;
+	border-bottom: 2px solid transparent;
+	border-radius: 6px 6px 0 0;
+	background: none;
+	color: var(--muted);
+	font-weight: 600;
+	touch-action: none;
+	user-select: none;
+}
+#tabs [role="tab"]:hover { color: var(--text); }
+#tabs [role="tab"][aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+#tabs [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#tabs [role="tab"].dragging { border-color: var(--accent); cursor: grabbing; opacity: 0.8; }
+#tabs [role="tab"].flagged::after {
+	content: "";
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	margin-left: 6px;
+	border-radius: 50%;
+	background: var(--warn);
+	vertical-align: middle;
+}
+#panels > .card { border-top: none; border-radius: 0 0 8px 8px; }
+#panels > .card:not(.open) { display: none; }
 
 .card {
 	display: flex;
@@ -228,7 +270,7 @@ body:not([data-console="open"]) #console-resizer { display: none; }
 .dock-buttons button:hover, #console-close:hover { color: var(--text); }
 .dock-buttons button[aria-pressed="true"] { color: var(--accent); }
 .dock-buttons svg, #console-close svg { width: 16px; height: 16px; }
-#console-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#console-toggle[aria-pressed="true"], #orientation-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 
 .card-head {
 	display: flex;
@@ -253,11 +295,9 @@ body:not([data-console="open"]) #console-resizer { display: none; }
 	background: var(--terminal);
 }
 
-/* Cards fold away, and are moved by the grip in their heading. */
-#controls .card-head { cursor: pointer; user-select: none; }
-#controls .card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* A section's heading. */
 #controls .card-head h2 { display: flex; align-items: center; gap: 8px; margin-right: auto; }
-#controls .card-head h2::before {
+#controls > .card .card-head h2::before {
 	content: "";
 	width: 6px;
 	height: 6px;
@@ -266,26 +306,9 @@ body:not([data-console="open"]) #console-resizer { display: none; }
 	transform: rotate(-45deg);
 	transition: transform 0.12s;
 }
-#controls .card.open .card-head h2::before { transform: rotate(45deg); }
-#controls .card:not(.open) > .card-head { border-bottom: none; }
-#controls .card:not(.open) > .card-body { display: none; }
-#controls .card:not(.open) > .card-head button:not(.card-grip) { display: none; }
-
-.card-grip {
-	flex: none;
-	width: 16px;
-	height: 22px;
-	margin: -4px 0 -4px -6px;
-	padding: 0;
-	border: none;
-	border-radius: 4px;
-	background: radial-gradient(circle, var(--muted) 1.2px, transparent 1.6px) center / 6px 6px;
-	cursor: grab;
-	touch-action: none;
-}
-.card-grip:focus-visible { outline: 2px solid var(--accent); }
-.card.dragging { outline: 2px solid var(--accent); opacity: 0.7; }
-.card.dragging .card-grip { cursor: grabbing; }
+#controls > .card.open .card-head h2::before { transform: rotate(45deg); }
+#controls > .card:not(.open) > .card-head { border-bottom: none; }
+#controls > .card:not(.open) > .card-body { display: none; }
 
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row > label { color: var(--muted); font-size: 12px; }
@@ -360,107 +383,6 @@ td:last-child, th:last-child { padding-right: 0; }
 #bonds-list td { vertical-align: top; padding: 3px 4px; }
 
 input[type="file"] { width: 100%; }
-/* Orientation viewer: a slab of six faces, turned as a whole by orientation.js. */
-#orientation-scene {
-	height: 230px;
-	perspective: 700px;
-	background: var(--inset);
-	border: 1px solid var(--border);
-	border-radius: 6px;
-	overflow: hidden;
-	--w: 150px; /* board X */
-	--d: 110px; /* board Y */
-	--h: 22px;  /* board Z */
-}
-#orientation-camera, #orientation-model, #orientation-floor, #orientation-model .face {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	transform-style: preserve-3d;
-}
-#orientation-camera { transform: rotateX(-24deg); }
-#orientation-floor {
-	width: 260px;
-	height: 260px;
-	margin: -130px 0 0 -130px;
-	transform: translateY(95px) rotateX(90deg);
-	border-radius: 50%;
-	background: radial-gradient(closest-side, color-mix(in srgb, var(--muted) 30%, transparent), transparent);
-}
-#orientation-model .face {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	box-sizing: border-box;
-	border: 1px solid rgba(0, 0, 0, 0.45);
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	color: #ffffff;
-	backface-visibility: hidden;
-}
-#orientation-model .top, #orientation-model .bottom {
-	width: var(--w);
-	height: var(--d);
-	margin: calc(var(--d) / -2) 0 0 calc(var(--w) / -2);
-}
-#orientation-model .front, #orientation-model .back {
-	width: var(--w);
-	height: var(--h);
-	margin: calc(var(--h) / -2) 0 0 calc(var(--w) / -2);
-}
-#orientation-model .left, #orientation-model .right {
-	width: var(--d);
-	height: var(--h);
-	margin: calc(var(--h) / -2) 0 0 calc(var(--d) / -2);
-}
-#orientation-model .top    { transform: rotateX(90deg) translateZ(calc(var(--h) / 2)); background: #1f7a4d; font-size: 14px; }
-#orientation-model .bottom { transform: rotateX(-90deg) translateZ(calc(var(--h) / 2)); background: #4a5560; }
-#orientation-model .front  { transform: translateZ(calc(var(--d) / 2)); background: #2f8f5d; }
-#orientation-model .back   { transform: rotateY(180deg) translateZ(calc(var(--d) / 2)); background: #17603c; }
-#orientation-model .right  { transform: rotateY(90deg) translateZ(calc(var(--w) / 2)); background: #c2410c; }
-#orientation-model .left   { transform: rotateY(-90deg) translateZ(calc(var(--w) / 2)); background: #17603c; }
-#orientation-model .axis { position: absolute; font-size: 11px; font-weight: 600; opacity: 0.85; }
-#orientation-model .axis.x { right: 6px; top: 50%; transform: translateY(-50%); }
-#orientation-model .axis.y { top: 4px; left: 50%; transform: translateX(-50%); }
-/* Where the screen is, as the board sees it: one spot on each side of the
-   board, and the chosen one drawn as a screen. They always face the viewer. */
-#orientation-model .screen-spot {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	width: 14px;
-	height: 14px;
-	margin: -7px 0 0 -7px;
-	padding: 0;
-	border: 1px solid var(--muted);
-	border-radius: 50%;
-	background: var(--panel);
-	opacity: 0.75;
-	font-size: 0;
-}
-#orientation-model .screen-spot:hover { border-color: var(--accent); opacity: 1; }
-#orientation-model .screen-spot[aria-pressed="true"] {
-	width: 46px;
-	height: 30px;
-	margin: -15px 0 0 -23px;
-	border: 2px solid var(--accent);
-	border-bottom-width: 5px;
-	border-radius: 4px;
-	background: color-mix(in srgb, var(--accent) 25%, var(--panel));
-	color: var(--text);
-	opacity: 1;
-	font-size: 9px;
-	font-weight: 600;
-	cursor: default;
-}
-#orientation-model .screen-spot[hidden] { display: none; }
-#orientation-roll, #orientation-pitch, #orientation-yaw {
-	display: inline-block;
-	min-width: 3.2em;
-	font-variant-numeric: tabular-nums;
-}
-
 /* Set on the page when the browser has no Web Bluetooth: only USB is offered. */
 .no-bluetooth .ble-only { display: none; }
 #firmware-status { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
@@ -517,7 +439,7 @@ header { position: relative; }
 #menu button { border: none; background: none; text-align: left; }
 #menu button:hover, #menu button:focus-visible { background: var(--inset); outline: none; }
 
-dialog.page {
+dialog.page, dialog.ask {
 	width: min(560px, calc(100vw - 32px));
 	max-height: calc(100dvh - 48px);
 	padding: 0;
@@ -526,7 +448,12 @@ dialog.page {
 	background: var(--panel);
 	color: var(--text);
 }
-dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
+dialog.page::backdrop, dialog.ask::backdrop { background: rgb(0 0 0 / 0.45); }
+dialog.ask { width: min(420px, calc(100vw - 32px)); padding: 16px; }
+dialog.ask h2 { font-size: 15px; margin-bottom: 8px; }
+dialog.ask p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+dialog.ask .row { justify-content: flex-end; margin-top: 14px; }
+dialog.ask button.danger { border-color: var(--error); background: var(--error); color: #ffffff; font-weight: 600; }
 .page-head {
 	position: sticky;
 	top: 0;
@@ -573,6 +500,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 	<h1>MyCato</h1>
 	<span id="device-name"></span>
 	<span id="status" data-state="disconnected">Disconnected</span>
+	<button id="orientation-toggle" aria-pressed="false" title="Show the board's orientation in its own window">Orientation</button>
 	<button id="console-toggle" aria-pressed="true">Console</button>
 	<button id="connect" class="primary">Connect</button>
 	<button id="menu-button" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">
@@ -595,7 +523,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 	<main id="controls">
 		<section class="card" data-card="device">
 			<div class="card-head">
-				<h2>Board</h2>
+				<h2>General</h2>
 				<button id="refresh-all" class="small" disabled>Refresh</button>
 			</div>
 			<div class="card-body">
@@ -766,6 +694,10 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 				<span id="hid-hosts" class="note"></span>
 			</div>
 			<div class="card-body">
+				<div class="row" id="hid-peer-row" hidden>
+					<label for="hid-peer">Settings for</label>
+					<select id="hid-peer" class="grow" disabled></select>
+				</div>
 				<div>
 					<div class="row" id="hid-reports"></div>
 					<p class="note">Reports the board sends. All are off until switched on.</p>
@@ -823,7 +755,7 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 						up-down (Y). With acceleration, slower turns than the rate given move
 						the pointer less than that and faster turns more. Automatic directions work however
 						the board is held, as long as it knows where the screen is: show it
-						on the Orientation card.
+						in the Orientation window.
 					</p>
 				</div>
 				</details>
@@ -844,44 +776,10 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 					<select id="hid-rate" disabled></select>
 				</div>
 				<p class="note">
-					These act on whichever computer or phone is using the board as a
-					mouse and keyboard, which may be this one.
+					Each paired device has its own settings, and the buttons here act
+					on the device chosen above, which may be this one.
 				</p>
 				<p class="message"></p>
-			</div>
-		</section>
-
-		<section class="card" data-card="orientation" data-independent>
-			<div class="card-head">
-				<h2>Orientation</h2>
-				<span id="orientation-rate" class="note"></span>
-			</div>
-			<div class="card-body">
-				<div id="orientation-scene">
-					<div id="orientation-camera">
-						<div id="orientation-floor"></div>
-						<div id="orientation-model">
-							<div class="face top">TOP<span class="axis x">X →</span><span class="axis y">Y ↑</span></div>
-							<div class="face bottom">BOTTOM</div>
-							<div class="face front">−Y</div>
-							<div class="face back">+Y</div>
-							<div class="face right">+X</div>
-							<div class="face left">−X</div>
-						</div>
-					</div>
-				</div>
-				<div class="row">
-					<span>Roll <strong id="orientation-roll">–</strong></span>
-					<span>Pitch <strong id="orientation-pitch">–</strong></span>
-					<span>Heading <strong id="orientation-yaw">–</strong></span>
-					<button id="orientation-zero" class="small" disabled>Face forward</button>
-				</div>
-				<p id="orientation-screen-note" class="note" hidden>
-					Point the board at the screen as you will use it. If the screen drawn
-					here is not where the real one is, click the dot that is: the pointer
-					then moves the right way however the board is held.
-				</p>
-				<p id="orientation-note" class="note"></p>
 			</div>
 		</section>
 
@@ -1002,6 +900,15 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 	</section>
 </div>
 
+<dialog id="ask" class="ask" aria-labelledby="ask-question" aria-describedby="ask-details">
+	<h2 id="ask-question"></h2>
+	<div id="ask-details"></div>
+	<div class="row">
+		<button id="ask-cancel">Cancel</button>
+		<button id="ask-confirm" class="primary">OK</button>
+	</div>
+</dialog>
+
 <dialog id="page-settings" class="page" aria-labelledby="settings-title">
 	<div class="page-head"><h2 id="settings-title">Settings</h2><button class="page-close" title="Close" aria-label="Close"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div>
 	<div class="page-body">
@@ -1032,8 +939,8 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 		</div>
 		<div class="setting">
 			<div>
-				Card and console arrangement
-				<p class="note">Puts the cards and the console back where they started. Reloads the page, which disconnects the board.</p>
+				Tab and console arrangement
+				<p class="note">Puts the tabs and the console back where they started. Reloads the page, which disconnects the board.</p>
 			</div>
 			<button id="setting-reset-layout">Reset</button>
 		</div>
@@ -1067,9 +974,9 @@ dialog.page::backdrop { background: rgb(0 0 0 / 0.45); }
 			</ul>
 		</div>
 		<div>
-			<h3>Cards</h3>
-			<p>Each card controls one part of the board. Click a heading to open a card, which closes the one that was open (the Orientation card stays as it is); drag the dots at the left of the heading to move it. Changes made on a card are sent to the board as the same commands you could type in the console.</p>
-			<p>The IMU card shows the sensor's configuration and live readings while it is open. The readings use the console's line to the board, so typing in the console is off meanwhile: <strong>Pause</strong> on the card gives it back. Changing the configuration needs <strong>Developer mode</strong>, under Settings.</p>
+			<h3>Tabs</h3>
+			<p>Each tab controls one part of the board. Drag a tab sideways to change the order. <strong>Orientation</strong> in the top row opens a live 3D view of the board in its own window. Changes made on a tab are sent to the board as the same commands you could type in the console.</p>
+			<p>The IMU tab shows the sensor's configuration and live readings while it is showing. The readings use the console's line to the board, so typing in the console is off meanwhile: <strong>Pause</strong> on the tab gives it back. Changing the configuration needs <strong>Developer mode</strong>, under Settings.</p>
 		</div>
 		<div>
 			<h3>Console</h3>

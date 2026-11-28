@@ -223,6 +223,16 @@ two more devices can still connect for the console and OTA.
 | 4 Gyroscope | HID Sensor *Gyrometer 3D*: X, Y, Z in tenths of a degree per second |
 | 5 Orientation | HID Sensor *Device Orientation*: quaternion x, y, z, w, scaled by 10000 |
 
+**The settings are kept for each paired device separately**: which reports it
+is sent, how often the sensor ones, and how the air mouse behaves for it. One
+computer can use the board as a mouse while another is sent only its
+orientation. `hid peer <number>` chooses the device the other `hid` commands
+are about, by its number in the `bonds` list, and `hid peer` shows it; with
+only one device paired there is nothing to choose. The commands that act as a
+mouse or keyboard (`hid mouse`, `hid key`, `hid type`) go to that device alone.
+A device's settings go when its bond is removed. On a board upgraded from
+firmware that had one set of settings for all, every device starts with those.
+
 **Every report is off until you switch it on**, and the choice is kept across
 resets:
 
@@ -230,6 +240,7 @@ resets:
 Cato_1A2B:~$ hid enable mouse
 Cato_1A2B:~$ hid enable orientation
 Cato_1A2B:~$ hid
+peer 1  80:A9:97:09:B1:31 (public)  "Office Mac", own settings
 enabled: mouse orientation
 hosts 1, listening to: mouse keyboard accel gyro orientation
 sensor rate 50 Hz
@@ -239,6 +250,7 @@ link: interval 15.00 ms, 2M, MTU 498
 Cato_1A2B:~$ hid mouse move 50 -20
 ```
 
+- `hid peer [number]` – show or choose the paired device the commands are about
 - `hid enable <report|all>`, `hid disable <report|all>` – `mouse`, `keyboard`,
   `accel`, `gyro`, `orientation`
 - `hid rate <Hz>` – rate of the sensor reports, 1 to 100 Hz (default 50)
@@ -284,7 +296,7 @@ tipping the board's forward axis up or down moves it up or down.
   `+x -x +y -y +z -z` (default `+y`). This is the one thing gravity cannot
   tell. While that axis points within about 17 degrees of straight up or
   down, sideways has no meaning and the pointer holds still.
-  In MyCato this is set on the **Orientation** card: a screen is drawn on the
+  In MyCato this is set in the **Orientation** window: a screen is drawn on the
   side of the board it is taken to be on, and clicking the dot on another
   side moves it there.
 - `hid air axes <x> <y>` – fixed axes instead: the gyroscope axis that drives
@@ -301,7 +313,7 @@ for applications that are not HID hosts: service
 bytes holding the quaternion x, y, z, w (board to room, Z up) as little-endian
 16-bit integers scaled by 10000, 50 times a second while anything is
 subscribed. It needs a paired link like everything else, and does not depend
-on which HID reports are enabled. The web app's **Orientation** card uses it
+on which HID reports are enabled. The web app's **Orientation** window uses it
 to draw the board turning in 3D.
 
 **Two HID services.** A HID over GATT report map is limited to 512 bytes, so
@@ -363,7 +375,7 @@ python tools/console.py
 It connects to the first board it finds; pass a name
 (`python tools/console.py "My Board"`) to pick one.
 
-**MyCato, the web app** – a browser page with the console, a card of controls
+**MyCato, the web app** – a browser page with the console, a tab of controls
 for every command above (name, restart, factory reset, blink, IMU, paired
 devices, sleep, mouse and pointer, keyboard, bootloader), a live 3D view of
 the board's orientation and firmware upgrade, all over one Bluetooth
@@ -380,17 +392,18 @@ the board is back. After a reload it also reconnects to the board it was last
 connected to, in browsers that let a page see the Bluetooth devices it was
 given before (`navigator.bluetooth.getDevices`); elsewhere, press **Connect**.
 
-The cards fill the page, folded to begin with. A click on a heading opens a
-card and closes the one that was open; the Orientation card alone opens and
-closes independently of the others. A card is moved by dragging the grip at
-the left of its heading (or, with the grip focused, the arrow keys).
+The page is laid out as tabs, one for each part of the board (General, Blink,
+IMU, Paired devices, Sleep, Mouse and keyboard, Firmware upgrade). One shows
+at a time, and dragging a tab sideways changes the order. The Orientation
+view is not a tab: **Orientation** in the top row opens it in a window of its
+own, and the board streams its orientation only while that window is open.
 
 The console is a drawer: the buttons in its heading dock it left, at the
 bottom or right, open it in a window of its own, or hide it. **Console** at
-the top of the page brings it back, and the bar between drawer and cards
+the top of the page brings it back, and the bar between drawer and tabs
 resizes it. In a narrow window the drawer is always at the bottom. The order
-of the cards and the place and size of the drawer are remembered in the
-browser.
+of the tabs, the tab showing and the place and size of the drawer are
+remembered in the browser.
 
 The menu at the right end of the top row opens **Settings** (light or dark
 appearance, console text size, resetting the arrangement, forgetting USB

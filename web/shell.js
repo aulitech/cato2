@@ -221,6 +221,10 @@ export function parseHid(lines) {
 	const hosts = find(/^hosts (\d+), listening to:(.*)$/);
 	const rate = find(/^sensor rate (\d+) Hz$/);
 
+	// The paired device the settings are for. Absent on firmware that had one
+	// set of settings for every device.
+	const peer = find(/^peer (\d+)\s+(\S+ \(\w+\))(?:\s+"(.*)")?, (own|default) settings$/);
+
 	// Absent on firmware from before the air mouse.
 	const air = find(
 		/^air mouse (on|off), speed (\d+) (\d+), accel (\d+) deg\/s, dead zone (\d+) deg\/s, axes (?:auto|(\S+) (\S+)), forward (\S+)$/);
@@ -229,6 +233,12 @@ export function parseHid(lines) {
 		throw new Error("Unexpected reply to hid");
 	}
 	return {
+		peer: peer && {
+			index: Number(peer[1]),
+			address: peer[2],
+			name: peer[3] || "",
+			own: peer[4] === "own",
+		},
 		air: air && {
 			on: air[1] === "on",
 			speedX: Number(air[2]),

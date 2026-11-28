@@ -4,7 +4,8 @@
 // bonds, sleep, bootloader). Each control runs the same command a user would
 // type in the console and shows the board's own reply or error.
 
-import { parseBlink, parseBonds, parseHid, parseImu, parseImuRead } from "./shell.js";
+import { ask } from "./dialog.js";
+import { parseBlink, parseBonds, parseHid, parseImu, parseImuRead, ShellError } from "./shell.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -59,7 +60,7 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 
 	function setEnabled(enabled) {
 		for (const card of cards) {
-			for (const el of card.querySelectorAll("button:not(.card-grip), input, select")) {
+			for (const el of card.querySelectorAll("button, input, select")) {
 				el.disabled = !enabled || (!developerMode() && Boolean(el.closest(".developer-only")));
 			}
 		}
@@ -117,18 +118,19 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 		await loadName();
 	}, "Renamed. Other devices may show the old name for a while."));
 
-	$("reboot").addEventListener("click", () => {
-		if (confirm("Restart the board?\n\nYou are disconnected; settings are kept.")) {
+	$("reboot").addEventListener("click", async () => {
+		if (await ask("Restart the board?\n\nYou are disconnected for a moment; settings are kept.",
+			      { action: "Restart" })) {
 			act("device", () => shell.fire("reboot"));
 		}
 	});
 
-	$("factory-reset").addEventListener("click", () => {
-		if (confirm("Reset the board to factory defaults?\n\nThis erases its name, blink, " +
-			    "IMU and HID settings and all paired devices, then restarts it. The app " +
-			    "forgets the board and does not reconnect. To connect again, first remove " +
-			    "(forget) the board in the Bluetooth settings of this and every other " +
-			    "paired device.")) {
+	$("factory-reset").addEventListener("click", async () => {
+		if (await ask("Reset the board to factory defaults?\n\nThis erases its name, blink, " +
+			      "IMU and HID settings and all paired devices, then restarts it. The app " +
+			      "forgets the board and does not reconnect.\n\nTo connect again, first " +
+			      "remove (forget) the board in the Bluetooth settings of this and every " +
+			      "other paired device.", { action: "Reset", danger: true })) {
 			act("device", async () => {
 				await shell.fire("factory_reset confirm");
 				await onFactoryReset();
@@ -136,9 +138,10 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 		}
 	});
 
-	$("bootloader").addEventListener("click", () => {
-		if (confirm("Restart into the USB bootloader?\n\nThe board disconnects and stays " +
-			    "in bootloader mode until firmware is copied to its USB drive or it is reset.")) {
+	$("bootloader").addEventListener("click", async () => {
+		if (await ask("Restart into the USB bootloader?\n\nThe board disconnects and stays " +
+			      "in bootloader mode until firmware is copied to its USB drive or it is " +
+			      "reset.", { action: "Restart" })) {
 			act("device", () => shell.fire("bootloader"));
 		}
 	});
@@ -309,8 +312,9 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 		await loadImu();
 	}, "Saved; applied again at every boot."));
 
-	$("imu-reset").addEventListener("click", () => {
-		if (confirm("Return the IMU to its default configuration and forget the saved one?")) {
+	$("imu-reset").addEventListener("click", async () => {
+		if (await ask("Return the IMU to its default configuration?\n\nThe saved " +
+			      "configuration is forgotten.", { action: "Reset", danger: true })) {
 			act("imu", async () => {
 				await shell.run("imu reset");
 				await loadImu();
@@ -336,14 +340,15 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 
 	// -------------------------------------------------------------- bonds ---
 
-	function removeBond(bond) {
+	async function removeBond(bond) {
 		const warning = bond.connected
-			? "This is the device you are connected with: removing it disconnects you, and " +
-			  "you must also forget the board in this device's Bluetooth settings before " +
-			  "pairing again.\n\n"
+			? "\n\nThis is the device you are connected with: removing it disconnects you, " +
+			  "and you must also forget the board in this device's Bluetooth settings " +
+			  "before pairing again."
 			: "";
 
-		if (!confirm(`${warning}Remove ${bond.address}?`)) {
+		if (!(await ask(`Remove ${bond.name || bond.address}?${warning}`,
+				{ action: "Remove", danger: true }))) {
 			return;
 		}
 		act("bonds", async () => {
@@ -358,6 +363,13 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 
 	async function loadBonds() {
 		const state = parseBonds(await shell.run("bonds"));
+
+		// Bonds are numbered as listed: a changed list means changed numbers.
+		if (state.bonds.map((bond) => bond.address).join() !==
+		    knownBonds.map((bond) => bond.address).join()) {
+			hidPeer = null;
+		}
+		knownBonds = state.bonds;
 		const list = $("bonds-list");
 
 		list.replaceChildren();
@@ -408,26 +420,28 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 		}
 	}));
 
-	$("bonds-remove-all").addEventListener("click", () => {
-		if (confirm("Remove all paired devices, including this one?\n\nYou are disconnected, " +
-			    "and each device must forget the board in its Bluetooth settings before " +
-			    "pairing again.")) {
+	$("bonds-remove-all").addEventListener("click", async () => {
+		if (await ask("Remove all paired devices, including this one?\n\nYou are " +
+			      "disconnected, and each device must forget the board in its Bluetooth " +
+			      "settings before pairing again.", { action: "Remove all", danger: true })) {
 			act("bonds", () => shell.fire("bonds remove all"));
 		}
 	});
 
 	// -------------------------------------------------------------- sleep ---
 
-	$("sleep-motion").addEventListener("click", () => {
+	$("sleep-motion").addEventListener("click", async () => {
 		const mg = $("sleep-threshold").value || 125;
 
-		if (confirm(`Put the board to sleep until it is moved (more than ${mg} mg) or reset?`)) {
+		if (await ask(`Put the board to sleep?\n\nIt wakes when it is moved (more than ${mg} mg) ` +
+			      "or reset.", { action: "Sleep" })) {
 			act("sleep", () => shell.fire(`sleep motion ${mg}`));
 		}
 	});
 
-	$("sleep-off").addEventListener("click", () => {
-		if (confirm("Put the board into deep sleep?\n\nOnly its reset button wakes it.")) {
+	$("sleep-off").addEventListener("click", async () => {
+		if (await ask("Put the board into deep sleep?\n\nOnly its reset button wakes it.",
+			      { action: "Sleep" })) {
 			act("sleep", () => shell.fire("sleep off"));
 		}
 	});
@@ -436,7 +450,18 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 
 	fill($("hid-rate"), HID_RATE_OPTIONS);
 
+	$("hid-peer").addEventListener("change", () => act("hid", async () => {
+		hidPeer = Number($("hid-peer").value);
+		try {
+			await shell.run(`hid peer ${hidPeer}`);
+		} finally {
+			await loadHid().catch(() => {});
+		}
+	}));
+
 	const hidSwitches = {};
+	let knownBonds = []; // as last listed, for the choice of device
+	let hidPeer = null; // the number of the device the settings shown are for
 	let airSupported = false; // firmware from before the air mouse has no such command
 
 	for (const [report, label] of HID_REPORTS) {
@@ -488,8 +513,49 @@ export function initControls({ shell, onName, onForward, onFactoryReset, onLive 
 	airSetting("air-axis-x", manualAxes);
 	airSetting("air-axis-y", manualAxes);
 
+	// Mouse, keyboard and sensor settings are kept for each paired device. The
+	// board is told which one the commands are about ("hid peer"); to begin
+	// with that is this device, the one the app is connected from.
+	async function readHid() {
+		try {
+			return parseHid(await shell.run("hid"));
+		} catch (err) {
+			// With several devices paired the board wants one chosen first.
+			if (!(err instanceof ShellError) || !/hid peer/.test(err.message)) {
+				throw err;
+			}
+			await shell.run(`hid peer ${(knownBonds.find((bond) => bond.connected) ||
+						     knownBonds[0] || { index: 1 }).index}`);
+			return parseHid(await shell.run("hid"));
+		}
+	}
+
 	async function loadHid() {
-		const hid = parseHid(await shell.run("hid"));
+		let hid = await readHid();
+
+		if (hid.peer) {
+			const mine = knownBonds.find((bond) => bond.connected);
+			const wanted = hidPeer || (mine && mine.index);
+
+			// Someone else may have chosen another device since.
+			if (wanted && wanted !== hid.peer.index &&
+			    knownBonds.some((bond) => bond.index === wanted)) {
+				await shell.run(`hid peer ${wanted}`);
+				hid = parseHid(await shell.run("hid"));
+			}
+			hidPeer = hid.peer.index;
+		}
+
+		const select = $("hid-peer");
+
+		$("hid-peer-row").hidden = !hid.peer;
+		select.replaceChildren(...(hid.peer ? knownBonds : []).map((bond) => new Option(
+			`${bond.name || bond.address}${bond.connected ? " (this device)" : ""}`,
+			bond.index)));
+		if (hid.peer) {
+			select.value = String(hid.peer.index);
+		}
+
 		const rate = String(hid.rate);
 
 		airSupported = Boolean(hid.air);

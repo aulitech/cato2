@@ -1,0 +1,331 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- The orientation viewer, in a window of its own. It has no link to the
+     board: the app's page sends the board's orientation and takes what is
+     clicked here (see orientation.js). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orientation – MyCato</title>
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<script>
+// The theme chosen in the app's Settings, before anything is drawn and
+// whenever it is changed there.
+function applyTheme() {
+	let theme;
+
+	try {
+		theme = (JSON.parse(localStorage.getItem("cato-settings")) || {}).theme;
+	} catch {
+		// The system's theme, then.
+	}
+	if (theme === "light" || theme === "dark") {
+		document.documentElement.dataset.theme = theme;
+	} else {
+		delete document.documentElement.dataset.theme;
+	}
+}
+applyTheme();
+window.addEventListener("storage", applyTheme);
+</script>
+<style>
+/* The app's palette: see index.html. */
+:root {
+	color-scheme: light dark;
+	--bg: #f2f2f2;
+	--panel: #ffffff;
+	--inset: #f2f2f2;
+	--border: #d4d4d4;
+	--text: #0f0f0f;
+	--muted: #525252;
+	--accent: #15803d;
+	--error: #b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--bg: #0a0a0a;
+		--panel: #1a1a1a;
+		--inset: #222222;
+		--border: #2e2e2e;
+		--text: #f2f2f2;
+		--muted: #b0b0b0;
+		--accent: #22c55e;
+		--error: #ef4444;
+	}
+}
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--bg: #0a0a0a;
+	--panel: #1a1a1a;
+	--inset: #222222;
+	--border: #2e2e2e;
+	--text: #f2f2f2;
+	--muted: #b0b0b0;
+	--accent: #22c55e;
+	--error: #ef4444;
+}
+:root[data-theme="light"] { color-scheme: light; }
+
+* { box-sizing: border-box; }
+body {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	height: 100dvh;
+	min-width: 300px;
+	margin: 0;
+	background: var(--panel);
+	color: var(--text);
+	font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+}
+h1 { margin: 0 auto 0 0; font-size: 13px; font-weight: 600; }
+main {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	flex: 1;
+	min-height: 0;
+	padding: 12px;
+	overflow-y: auto;
+}
+button { font: inherit; color: var(--text); cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+#orientation-zero {
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--panel);
+	font-size: 12px;
+}
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.note { margin: 0; font-size: 12px; color: var(--muted); }
+#orphan { margin: 0; color: var(--error); }
+
+/* Orientation viewer: a slab of six faces, turned as a whole by orientation.js. */
+#orientation-scene {
+	flex: 1;
+	min-height: 210px;
+	perspective: 700px;
+	background: var(--inset);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	overflow: hidden;
+	--w: 150px; /* board X */
+	--d: 110px; /* board Y */
+	--h: 22px;  /* board Z */
+}
+#orientation-camera, #orientation-model, #orientation-floor, #orientation-model .face {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform-style: preserve-3d;
+}
+#orientation-camera { transform: rotateX(-24deg); }
+#orientation-scene { position: relative; }
+#orientation-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* With the case drawn on the canvas, the stand-in slab is not. */
+#orientation-scene.has-model .face { display: none; }
+#orientation-floor {
+	width: 260px;
+	height: 260px;
+	margin: -130px 0 0 -130px;
+	transform: translateY(95px) rotateX(90deg);
+	border-radius: 50%;
+	background: radial-gradient(closest-side, color-mix(in srgb, var(--muted) 30%, transparent), transparent);
+}
+#orientation-model .face {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	border: 1px solid rgba(0, 0, 0, 0.45);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	color: #ffffff;
+	backface-visibility: hidden;
+}
+#orientation-model .top, #orientation-model .bottom {
+	width: var(--w);
+	height: var(--d);
+	margin: calc(var(--d) / -2) 0 0 calc(var(--w) / -2);
+}
+#orientation-model .front, #orientation-model .back {
+	width: var(--w);
+	height: var(--h);
+	margin: calc(var(--h) / -2) 0 0 calc(var(--w) / -2);
+}
+#orientation-model .left, #orientation-model .right {
+	width: var(--d);
+	height: var(--h);
+	margin: calc(var(--h) / -2) 0 0 calc(var(--d) / -2);
+}
+#orientation-model .top    { transform: rotateX(90deg) translateZ(calc(var(--h) / 2)); background: #1f7a4d; font-size: 14px; }
+#orientation-model .bottom { transform: rotateX(-90deg) translateZ(calc(var(--h) / 2)); background: #4a5560; }
+#orientation-model .front  { transform: translateZ(calc(var(--d) / 2)); background: #2f8f5d; }
+#orientation-model .back   { transform: rotateY(180deg) translateZ(calc(var(--d) / 2)); background: #17603c; }
+#orientation-model .right  { transform: rotateY(90deg) translateZ(calc(var(--w) / 2)); background: #c2410c; }
+#orientation-model .left   { transform: rotateY(-90deg) translateZ(calc(var(--w) / 2)); background: #17603c; }
+#orientation-model .axis { position: absolute; font-size: 11px; font-weight: 600; opacity: 0.85; }
+#orientation-model .axis.x { right: 6px; top: 50%; transform: translateY(-50%); }
+#orientation-model .axis.y { top: 4px; left: 50%; transform: translateX(-50%); }
+/* Where the screen is, as the board sees it: one spot on each side of the
+   board, and the chosen one drawn as a screen. They always face the viewer. */
+#orientation-model .screen-spot {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 14px;
+	height: 14px;
+	margin: -7px 0 0 -7px;
+	padding: 0;
+	border: 1px solid var(--muted);
+	border-radius: 50%;
+	background: var(--panel);
+	opacity: 0.75;
+	font-size: 0;
+}
+#orientation-model .screen-spot:hover { border-color: var(--accent); opacity: 1; }
+#orientation-model .screen-spot[aria-pressed="true"] {
+	width: 46px;
+	height: 30px;
+	margin: -15px 0 0 -23px;
+	border: 2px solid var(--accent);
+	border-bottom-width: 5px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--accent) 25%, var(--panel));
+	color: var(--text);
+	opacity: 1;
+	font-size: 9px;
+	font-weight: 600;
+	cursor: default;
+}
+#orientation-model .screen-spot[hidden] { display: none; }
+#orientation-roll, #orientation-pitch, #orientation-yaw {
+	display: inline-block;
+	min-width: 3.2em;
+	font-variant-numeric: tabular-nums;
+}
+</style>
+</head>
+<body>
+<header>
+	<h1>Orientation</h1>
+	<span id="orientation-rate" class="note"></span>
+	<button id="orientation-zero" disabled>Face forward</button>
+</header>
+<main>
+	<p id="orphan" hidden>The app's page is closed. Open Orientation from the app again.</p>
+	<div id="orientation-scene">
+		<canvas id="orientation-canvas"></canvas>
+		<div id="orientation-camera">
+			<div id="orientation-floor"></div>
+			<div id="orientation-model">
+				<div class="face top">TOP<span class="axis x">X →</span><span class="axis y">Y ↑</span></div>
+				<div class="face bottom">BOTTOM</div>
+				<div class="face front">−Y</div>
+				<div class="face back">+Y</div>
+				<div class="face right">+X</div>
+				<div class="face left">−X</div>
+			</div>
+		</div>
+	</div>
+	<div class="row">
+		<span>Roll <strong id="orientation-roll">–</strong></span>
+		<span>Pitch <strong id="orientation-pitch">–</strong></span>
+		<span>Heading <strong id="orientation-yaw">–</strong></span>
+	</div>
+	<p id="orientation-screen-note" class="note" hidden>
+		Point the board at the screen as you will use it. If the screen drawn
+		here is not where the real one is, click the dot that is: the pointer
+		then moves the right way however the board is held.
+	</p>
+	<p id="orientation-note" class="note"></p>
+</main>
+
+<script type="module">
+import { initOrientationView } from "./orientation.js";
+
+const app = window.opener;
+const tell = (message) => {
+	if (app && !app.closed) {
+		app.postMessage(message, location.origin);
+	}
+};
+const view = initOrientationView({
+	setForward: (axis) => tell({ type: "orientation-forward", axis }),
+});
+
+// The window opens big enough to show everything. Where it does not (larger
+// text, a browser that gives the page less room than was asked for), it grows
+// to fit, until the user gives it a size of their own.
+const main = document.querySelector("main");
+let fitting = true;
+let fitted = null; // the window's size when last made to fit
+let growing = false;
+
+function fit() {
+	const extra = main.scrollHeight - main.clientHeight;
+
+	if (fitted && (window.outerWidth !== fitted[0] || window.outerHeight !== fitted[1])) {
+		fitting = false;
+	}
+	if (!fitting) {
+		return;
+	}
+	fitted = [window.outerWidth, window.outerHeight];
+	if (extra > 0) {
+		growing = true;
+		window.resizeBy(0, extra);
+	}
+}
+window.addEventListener("resize", () => {
+	if (growing) {
+		growing = false;
+		fitted = [window.outerWidth, window.outerHeight];
+	}
+});
+
+if (!app) {
+	document.getElementById("orphan").hidden = false;
+} else {
+	window.addEventListener("message", (event) => {
+		if (event.origin !== location.origin || event.source !== app) {
+			return;
+		}
+
+		const message = event.data || {};
+
+		if (message.type === "orientation-sample") {
+			view.sample(message.q);
+		} else if (message.type === "orientation-state") {
+			view.setState(message);
+			fit();
+		} else if (message.type === "orientation-note") {
+			view.setNote(String(message.text));
+			fit();
+		}
+	});
+	window.addEventListener("pagehide", () => tell({ type: "orientation-closed" }));
+	setInterval(() => {
+		const orphan = app.closed;
+
+		document.getElementById("orphan").hidden = !orphan;
+		if (orphan) {
+			view.setState({ live: false, supported: true, forward: null });
+		}
+	}, 1000);
+
+	tell({ type: "orientation-ready" });
+}
+</script>
+</body>
+</html>

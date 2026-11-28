@@ -92,7 +92,7 @@ const term = new Terminal({
 	fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 	fontSize: 13,
 	scrollback: 5000,
-	theme: { background: "#11151a", foreground: "#d7dde5", cursor: "#d7dde5" },
+	theme: { background: "#0a0a0a", foreground: "#f2f2f2", cursor: "#22c55e" },
 });
 const fit = new FitAddon.FitAddon();
 
