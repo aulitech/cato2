@@ -9,10 +9,12 @@ export const OP_WRITE = 2;
 
 export const GROUP_OS = 0;
 export const GROUP_IMAGE = 1;
+export const GROUP_FS = 8;
 
 export const OS_RESET = 5;
 export const IMAGE_STATE = 0;
 export const IMAGE_UPLOAD = 1;
+export const FS_FILE = 0; // write: a piece of an upload; read: a piece of a download
 
 export const HEADER_SIZE = 8;
 
@@ -429,6 +431,7 @@ export async function unzip(archive) {
 export async function loadFirmware(fileName, bytes) {
 	let image = bytes;
 	let name = fileName;
+	let loadAddress = null; // where in flash the image runs from, if the file says
 
 	if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
 		const files = await unzip(bytes);
@@ -446,11 +449,14 @@ export async function loadFirmware(fileName, bytes) {
 		}
 
 		name = apps[0].file;
+		if (Number.isInteger(apps[0].load_address)) {
+			loadAddress = apps[0].load_address;
+		}
 		image = files[name];
 		if (!image) {
 			throw new Error(`Archive is missing ${name}`);
 		}
 	}
 
-	return { name, image, ...parseImageHeader(image) };
+	return { name, image, loadAddress, ...parseImageHeader(image) };
 }

@@ -4,8 +4,9 @@
 // Web Bluetooth connection.
 
 import { initControls } from "./controls.js";
+import { initFiles } from "./files.js";
 import { initOrientation, ORIENTATION_SERVICE, ORIENTATION_VALUE } from "./orientation.js";
-import { ShellRunner } from "./shell.js";
+import { ShellError, ShellRunner } from "./shell.js";
 import * as smp from "./smp.js";
 import * as usb from "./usb.js";
 import { initLayout } from "./layout.js";
@@ -78,7 +79,51 @@ const state = {
 	userDisconnect: false, // the user pressed Disconnect
 	reconnect: null, // the token of the reconnection under way
 	consoleLocked: false, // typing in the console is off (IMU card live)
+	slot: null, // where in flash the connected board's firmware runs from, once known
 };
+
+// A build made for one flash layout cannot be installed over Bluetooth on a
+// board that has another: that replaces the firmware only, and it would be
+// put where it was not built to run. The USB upgrade replaces the bootloader
+// too, and moves a board on to the layout of the file it writes. A board's
+// layout is known by where its firmware runs from, which "version" says;
+// firmware from before it did has the layout that kept the SoftDevice.
+const LEGACY_SLOT = 0x33000;
+
+/** Whether a firmware file is for the flash layout the connected board has. */
+function fitsBoard(firmware) {
+	return !firmware || firmware.loadAddress === null || state.slot === null ||
+		firmware.loadAddress === state.slot;
+}
+
+/** The published build is for the layout this board has since moved on from. */
+function boardIsAhead() {
+	return Boolean(state.latest) && !fitsBoard(state.latest.firmware) &&
+		state.latest.firmware.loadAddress === LEGACY_SLOT;
+}
+
+async function readSlot() {
+	let slot = LEGACY_SLOT;
+
+	try {
+		const match = (await shell.run("version", { quiet: true }))
+			.map((line) => /^image slot at 0x([0-9a-f]+)$/i.exec(line))
+			.find(Boolean);
+
+		if (match) {
+			slot = parseInt(match[1], 16);
+		}
+	} catch (err) {
+		if (!(err instanceof ShellError)) {
+			// No answer: not known, and nothing is held back on a guess.
+			return;
+		}
+		// Firmware from before the command existed.
+	}
+	state.slot = slot;
+	showFirmwareStatus();
+	updateControls();
+}
 
 const assembler = new smp.PacketAssembler();
 const decoder = new TextDecoder();
@@ -176,6 +221,26 @@ const controls = initControls({
 		}
 	},
 });
+
+/**
+ * Runs a task that needs the link to itself, as a firmware upgrade does: the
+ * two never run together, and the controls are off meanwhile.
+ */
+async function exclusive(task) {
+	if (state.busy) {
+		throw new Error("Something else is using the connection: wait for it to finish.");
+	}
+	state.busy = true;
+	updateControls();
+	try {
+		return await task();
+	} finally {
+		state.busy = false;
+		updateControls();
+	}
+}
+
+const files = initFiles({ shell, request, exclusive });
 
 function termNote(text) {
 	consoleWrite(`\r\n\x1b[2m-- ${text} --\x1b[0m\r\n`);
@@ -392,6 +457,7 @@ function onConnected() {
 	updateControls();
 	// The first command also draws the shell prompt.
 	controls.refresh();
+	readSlot();
 	if (!state.busy) {
 		refreshSlots().catch((err) => log(`Could not read image list: ${err.message}`));
 	}
@@ -406,6 +472,7 @@ function onDisconnected() {
 	queueMicrotask(showFirmwareStatus);
 	state.nusRx = null;
 	state.smpChar = null;
+	state.slot = null;
 	shell.reset();
 	if (state.pending) {
 		clearTimeout(state.pending.timer);
@@ -691,6 +758,14 @@ function showFirmwareStatus() {
 		text = "The board has the latest firmware.";
 		kind = "ok";
 		badge = "Up to date";
+	} else if (boardIsAhead()) {
+		text = "This board's firmware is newer than the published build, which was made for " +
+			"an earlier flash layout and cannot be installed on it.";
+	} else if (!fitsBoard(latest.firmware)) {
+		text = "A newer firmware is available. It changes the board's flash layout, so this " +
+			"once it has to be installed over USB. Settings and paired devices are kept.";
+		kind = "update";
+		badge = "Update available";
 	} else {
 		text = "A newer firmware is available.";
 		kind = "update";
@@ -770,9 +845,14 @@ async function waitForReboot() {
 }
 
 async function upgrade(firmware) {
+	ui.log.replaceChildren();
+	if (!fitsBoard(firmware)) {
+		log("This firmware is built for another flash layout than the board has, and cannot " +
+		    "be installed over Bluetooth. Upgrade over USB instead.", "error");
+		return;
+	}
 	state.busy = true;
 	updateControls();
-	ui.log.replaceChildren();
 	ui.upgradeProgress.hidden = false;
 
 	try {
@@ -853,10 +933,15 @@ function updateControls() {
 	ui.connect.disabled = state.busy;
 	ui.refresh.disabled = !connected || state.busy;
 	ui.file.disabled = state.busy;
+	const latestFits = !state.latest || fitsBoard(state.latest.firmware);
+
 	ui.upload.disabled = !connected || state.busy || !state.firmware;
-	ui.upgradeBle.disabled = !connected || state.busy || !state.latest;
-	ui.upgradeBle.title = connected ? "" : "Connect to the board first";
-	ui.upgradeUsb.disabled = state.busy || !state.latest;
+	ui.upgradeBle.disabled = !connected || state.busy || !state.latest || !latestFits;
+	ui.upgradeBle.title = !connected ? "Connect to the board first"
+		: latestFits ? "" : "This build changes the flash layout: upgrade over USB";
+	// Writing a build for the earlier layout over a board that has moved on
+	// leaves it unable to start, until a current build is written by USB.
+	ui.upgradeUsb.disabled = state.busy || !state.latest || boardIsAhead();
 	if (!BLUETOOTH) {
 		ui.connect.disabled = true;
 	}
@@ -865,6 +950,7 @@ function updateControls() {
 	ui.usbDrive.disabled = state.busy;
 	// No shell commands while an upgrade has the link busy.
 	controls.setConnected(connected && !state.busy);
+	files.setConnected(connected);
 }
 
 ui.connect.addEventListener("click", async () => {

@@ -16,6 +16,7 @@ const FILES = [
 	"console.html",
 	"controls.js",
 	"dialog.js",
+	"files.js",
 	"layout.js",
 	"menu.js",
 	"model.js",
