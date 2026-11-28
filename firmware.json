@@ -1,0 +1,7 @@
+{
+  "version": "0.5.0",
+  "commit": "b1ef2f91aff235db64d89c4b9e3d9146d08f1192",
+  "built": "2026-11-28T14:29:13Z",
+  "dfu": "cato.zip",
+  "usb": "usb-upgrade.uf2"
+}
